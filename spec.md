@@ -1,328 +1,168 @@
-# Agent Hotel — an Agent Substrate demo feature
+# Agent Hotel
 
-A demo app that teaches [Agent Substrate](https://github.com/agent-substrate/substrate) by
-running **12 named, Gemini-powered chat agents ("guests") on a 3-worker pool** (4×
-oversubscription). Each guest keeps its entire conversation history in RAM, **yields its
-compute ~10 seconds after replying** (checkpoint → GCS, zero-idle), and is **transparently
-restored — memory intact, often on a different worker — the moment you message it again**
-(resume-on-request through the atenet-router).
-
-Built as an **external feature** for the GKE Feature Showcase Hub
-(`gke_all/feature.md` contract): this repo runs **standalone** on its own GKE cluster and
-also mounts as a git submodule at `features/substrate-hotel/` in the hub.
-
-What it showcases (beyond the existing `substrate-basic` / `substrate-overcommit` features):
-
-| Substrate capability | How the demo shows it |
-| --- | --- |
-| Zero-idle self-suspension | Agent decides to yield seconds after its last reply |
-| Resume-on-request | Messaging a 💤 guest transparently wakes it via the DNS mesh |
-| Oversubscription | 12 persistent agents on a 3-pod WorkerPool, live worker-lane churn |
-| RAM-state persistence | Conversation + `boot_id` survive suspend/resume/migration |
-| Keyless credentials | Vertex AI via Workload Identity/ADC — no secret is ever frozen into a snapshot; tokens are re-fetched after every resume |
-| Golden snapshots | New guests check in instantly from the v0 checkpoint |
-
-UI: a "hotel floor plan" — 12 guest cards (🟢 awake / 💤 suspended, current worker), a
-3-lane worker strip showing occupancy churn, a compute-saved meter, and a chat drawer that
-proves the guest remembers everything across suspends.
+*A demo that teaches [Agent Substrate](https://github.com/agent-substrate/substrate) by
+letting you chat with 12 AI agents who live in a hotel with only 3 rooms.*
 
 ---
 
-## Verified facts the design is built on
+## The idea in one paragraph
 
-Upstream source verified at the pinned SHA `d8f562d208c246a907fe7b3da81dd0318c5959f8`
-(the same pin `substrate-overcommit` uses; newer upstream requires alpha pod-certificate
-APIs):
+AI agents spend most of their life waiting for the next message. Keeping a pod warm for
+every agent wastes almost all of its compute. Agent Substrate solves this by
+**checkpointing an agent's entire memory to storage the moment it goes idle, and
+restoring it — mid-thought, on any available machine — the moment someone needs it
+again**. Agent Hotel makes that visible and fun: twelve chatty hotel guests share three
+rooms, and you can watch them fall asleep, get evicted to the cloud, and wake up
+somewhere else without ever losing the thread of your conversation.
 
-- ActorTemplate container images **must be digest-pinned** (CEL rule requires `@`).
-- `readyz.httpGet.port` is **required**; env supports literal values and
-  `valueFrom.secretKeyRef` (not used here — we use Vertex ADC instead of an API key).
-- In `--auth-mode=jwt` (which our static-certs plane runs), the api-server accepts **any**
-  cluster-issuer SA token with audience `api.ate-system.svc` — no SA allowlist. A pod can
-  authenticate with its own projected SA token.
-- Upstream's in-actor self-suspend (`demos/agent-secret`) dials the api-server with no
-  bearer token — it **will be rejected on our jwt-auth plane** (drives decision D4).
-- Resume of an actor with no last snapshot falls back to the **golden snapshot**; env
-  values are frozen at golden-snapshot creation time.
+## The experience
 
-Hub internals verified:
-
-- The Hub's manifest applier **rewrites `metadata.namespace` and all RBAC subjects** to
-  the deploy namespace → anything whose subject must live outside the feature namespace
-  must ship in `cluster/` (applied verbatim at bootstrap), never in `infra/`.
-- `${GOOGLE_GENAI_USE_VERTEXAI}` is a Hub-guaranteed template var; the `agent-sandbox`
-  feature is the Vertex precedent: `genai.Client(vertexai=True, project=$GOOGLE_CLOUD_PROJECT,
-  location=…)` with ADC — no API key anywhere.
-- Hub RBAC (`infra/main-app.yaml`) and `showcase_admin/requirements-dev.txt` already
-  cover everything this feature needs — **no hub-core edits required**.
-- The hub build pipeline pushes `:latest` only (drives decision D7).
-
-## Design decisions
-
-### D1 — Name and layout
-Feature name **`substrate-hotel`** (namespace `gke-showcase-substrate-hotel`, playroom slug
-`substrate-hotel`). Repo root == feature dir, jobset-style; submodule mount
-`features/substrate-hotel/`.
-
-### D2 — Dual-mode architecture (jobset model)
-- A **concierge** FastAPI Deployment in the feature namespace owns *all* ate logic: the
-  gRPC ateapi client, actor lifecycle, chat proxying through
-  `http://atenet-router.ate-system.svc` with `Host: <guest>.hotel.actors.resources.substrate.ate.dev`
-  (120 s timeout), and serving the frontend itself (standalone UI requirement).
-- `hub_router.py` stays **thin**: in LIVE, `GET /config` returns mode + gateway IP (Hub
-  SDK); in MOCK it serves deterministic canned hotel state and scripted persona replies. It imports only FastAPI + the Hub SDK —
-  zero new hub dependencies, no protos in the Hub image.
-- gRPC client lives once in `app/ate_client.py` (ported from `substrate-overcommit`'s
-  hub_router), with vendored `ateapipb/` stubs baked into the concierge image.
-- **Concierge → api-server auth**: projected `serviceAccountToken` volume with
-  `audience: api.ate-system.svc` (kubelet auto-rotates). TLS CA: read Secret
-  `ate-system/servicedns-ca` via the K8s API, granted by a name-scoped ClusterRole in
-  `infra/00-rbac.yaml` (the Hub's subject rewrite points the binding at the deploy
-  namespace — exactly what we want here).
-
-### D3 — LLM access: Vertex AI via Workload Identity / ADC (agent-sandbox pattern)
-- No API key anywhere. The agent uses `genai.Client(vertexai=True,
-  project=$GOOGLE_CLOUD_PROJECT, location=$GOOGLE_CLOUD_LOCATION)` — exactly the
-  `agent-sandbox` feature's pattern (`demo-app/main.py`). ActorTemplate env carries only
-  plain values: `GOOGLE_GENAI_USE_VERTEXAI`, `GOOGLE_CLOUD_PROJECT=${PROJECT_NAME}`,
-  `GOOGLE_CLOUD_LOCATION=${REGION}`.
-- **This is the better Substrate story**: nothing secret is ever frozen into the golden
-  snapshot; ADC fetches a fresh token from the metadata server on every call, including
-  right after a resume on a different worker.
-- **IAM/WI plumbing** (idempotent, in the prereq script and `setup_infra.sh`): grant
-  `roles/aiplatform.user` to the Workload Identity principals the actor traffic will
-  carry (the worker pods' KSA in the feature namespace, plus the concierge SA for the
-  fallback path): `PROJECT.svc.id.goog[<ns>/<ksa>]`. On clusters without WI the node SA
-  usually already has Vertex access (agent-sandbox relies on this too).
-- **Primary path**: the actor calls Vertex directly from inside the gVisor sandbox
-  (egress via the worker pod's network namespace → per-pod metadata server). Precedent:
-  upstream `claude-code-multiplex` actors call api.anthropic.com directly.
-- **Fallback** if metadata/ADC is unreachable from inside the sandbox: concierge
-  `POST /llm` proxy (the concierge is a normal pod where ADC trivially works); the
-  agent's `llm.py` switches on `LLM_MODE=direct|proxy`. Vertex unavailable entirely ⇒
-  deterministic canned persona replies + UI banner.
-
-### D4 — Zero-idle yield: agent-initiated, concierge-executed (+ sweeper)
-The agent cannot call `SuspendActor` itself on a jwt-auth plane (a baked token would
-freeze in the golden snapshot and expire). Instead:
-- ~`LINGER_SECONDS` (10 s) after its last reply, the agent POSTs
-  `CONCIERGE_URL/internal/yield {"guest": <name>}` (name parsed from the request `Host`
-  header, agent-secret pattern). The **agent still decides when to yield** — the
-  concierge merely executes the authenticated `SuspendActor` as its proxy.
-- `/internal/yield` is spoof-tolerant: it suspends only if the concierge's own
-  last-activity record for that guest is older than the linger; it is exempt from hub-JWT
-  (cluster-internal, not reachable via the Gateway path).
-- A background **sweeper** (every 5 s, suspend guests idle > 30 s) backstops lost yield
-  calls and frees slots when all 3 workers are busy and a 4th guest is woken.
-
-### D5 — Cluster prereqs: copy of the overcommit installer
-`cluster/install-substrate-hotel-prereq.sh` = near-verbatim copy of
-`install-substrate-overcommit-prereq.sh` (verified feature-agnostic and idempotent), plus
-the copied `cluster/static-certs/` overlay. **Same `UPSTREAM_SHA` pin — keep in lockstep
-with `substrate-overcommit`** (both hooks share the one `ate-system` plane).
-`requires.crds: [workerpools.ate.dev, actortemplates.ate.dev]`.
-
-### D6 — Feature shape: jobset-style
-Concierge Deployment `substrate-hotel-concierge-deployment` (== `deployment_name`), dedicated
-Gateway `substrate-hotel-gw` (`gke-l7-global-external-managed`), HTTPRoute, Service 80→8000.
-WorkerPool named `substrate-hotel` (its reconciled `substrate-hotel-deployment` never collides
-with the concierge name).
-
-### D7 — Digest pinning via one image + self-inspection
-One image (`substrate-hotel`) serves as both concierge and agent guest. At startup the
-concierge reads its own pod's `status.containerStatuses[].imageID` (downward-API
-`POD_NAME`/`POD_NAMESPACE`; tolerate `docker-pullable://` prefix and empty-while-pulling)
-to get `…:latest@sha256:…`, then **creates the ActorTemplate at runtime**
-(`guest-<digest12>`; templates are immutable, so a rebuild+rollout automatically yields a
-new template and fresh golden snapshot). Consequence: no `actortemplate.yaml` in
-`infra/` — only the WorkerPool is static.
-
-### D8 — Resume latency vs the L7 LB
-`infra/backend-policy.yaml`: `GCPBackendPolicy` with `timeoutSec: 180` on the concierge
-Service (the ALB's default 30 s would cut cold resumes). Frontend renders an explicit
-"💤 → waking… (checkpoint restore, ~30 s)" state instead of a spinner.
-
-## Repository layout
+You open the **hotel floor plan**:
 
 ```
-spec.md                       This spec
-feature.yaml                  Hub descriptor (see sketch below)
-README.md                     Story, quickstarts (standalone + hub), caveats
-ARCHITECTURE.md               Concierge/agent/ate-plane wiring; chat/yield/wake sequences
-.gitignore  .dockerignore  .env.example
-setup_infra.sh                Standalone: create cluster (gateway-api=standard, WI enabled,
-                              3×e2-standard-4) → apply cluster/*.yaml → run prereq
-                              (incl. Vertex IAM/WI bindings); --delete/--delete-cluster
-deploy_app.sh                 AR repo, docker build --platform linux/amd64 + push, namespace,
-                              render() infra/, rollout + Gateway IP wait
-verify_setup.sh               Smoke: ready → gateway → /healthz → chat → wait linger →
-                              suspended → chat again → history grew, boot_id unchanged
-hub_router.py                 Thin: LIVE /config; MOCK canned /state + scripted /chat
-app/
-  Dockerfile                  python:3.11-slim; app/ + ateapipb/ + frontend/; uvicorn concierge:app :8000
-  requirements.txt            fastapi uvicorn httpx grpcio protobuf>=6.31 kubernetes pyjwt google-genai
-  concierge.py                /healthz, static UI, /api/state, /api/guests/{name}/chat,
-                              /api/guests/{name}/history, /api/open, /api/reset, /internal/yield, sweeper
-  ate_client.py               gRPC ateapi client (projected-token creds, CA via K8s API, atespace "hotel")
-  template_manager.py         imageID → digest → ensure ActorTemplate guest-<digest12>
-  personas.py                 The 12 guests: name/emoji/persona/system prompt (single source of truth)
-  hub_auth.py                 Copy of jobset's opt-in HS256 hub-JWT dependency
-  agent/
-    server.py                 The actor, HTTP :80 — /healthz /readyz, POST /chat (RAM history →
-                              llm.reply → arm yield timer), GET /history; boot_id + resume counter
-    llm.py                    google-genai (gemini-2.5-flash, vertexai=True + ADC; LLM_MODE=direct|proxy)
-                              or deterministic canned replies when Vertex is unavailable
-ateapipb/                     Vendored proto stubs (copied from features/substrate-overcommit/ateapipb/)
-frontend/
-  index.html  app.js  style.css   Floor plan, worker lanes, meter, chat drawer; jobset dual-surface
-                              pattern (config probe → gateway origin, healthz-gated; mock fallback); 2 s poll
-infra/
-  00-rbac.yaml                Concierge SA; Role (pods get/list, actortemplates CRUD);
-                              ClusterRole+CRB for the servicedns-ca read
-  backend-policy.yaml         GCPBackendPolicy timeoutSec 180
-  deployment.yaml             substrate-hotel-concierge-deployment (${SUBSTRATE_HOTEL_IMAGE}, probes /healthz:8000,
-                              JWT_SECRET_KEY, downward API, projected SA-token volume)
-  gateway.yaml  http-route.yaml  service.yaml
-  workerpool.yaml             WorkerPool substrate-hotel, replicas 3, sandboxClass gvisor,
-                              ateomImage ${REGION}-docker.pkg.dev/${PROJECT_NAME}/${ARTIFACT_REGISTRY_REPO}/ateom-gvisor:latest
-cluster/
-  README.md
-  install-substrate-hotel-prereq.sh   Copy of the overcommit prereq (same UPSTREAM_SHA)
-                              + idempotent Vertex IAM/WI bindings (roles/aiplatform.user)
-  static-certs/kustomization.yaml  static-certs/patches.yaml
-tests/
-  conftest.py  test_manifests.py  test_agent_server.py  test_concierge_api.py  test_hub_router_mock.py
+  AGENT HOTEL                        compute saved: 75%  (12 guests / 3 rooms)
+ ┌──────────────────────────────────────────────────────────────────────┐
+ │  Rooms      [ Room 1: Marisol 🟢 ] [ Room 2: empty ] [ Room 3: Kai 🟢 ]
+ ├──────────────────────────────────────────────────────────────────────┤
+ │  🟢 Marisol   the poet          awake     Room 1                     │
+ │  💤 Viktor    the chess coach   sleeping  —                          │
+ │  💤 Amara     the travel guide  sleeping  —                          │
+ │  🟢 Kai       the comedian      awake     Room 3                     │
+ │  💤 Nadia     the historian     sleeping  —          ... (12 total)  │
+ └──────────────────────────────────────────────────────────────────────┘
 ```
 
-## Key content sketches
+Each guest is a real, running AI agent (Gemini on Vertex AI) with a distinct personality.
+What you do:
 
-**feature.yaml**
+1. **Chat with a guest.** Click Amara, ask her to plan a trip to Kyoto. She replies in
+   character. Her card shows which room (worker pod) she's occupying.
+2. **Watch her go to sleep.** About 10 seconds after her last reply, Amara decides she's
+   idle and *yields her room*: her whole memory — the conversation, every variable in her
+   process — is checkpointed to cloud storage, and the room frees up for someone else.
+   Her card flips to 💤.
+3. **Wake her just by talking to her.** Send another message: "actually, make it Osaka."
+   You'll see a "waking Amara… (restoring checkpoint, ~30 s)" state, and then she answers
+   **remembering the entire Kyoto conversation** — even though her process was frozen,
+   shipped to storage, and restored, usually into a *different room* than before.
+4. **Fill the hotel.** Hit "Open the hotel" to check in all 12 guests and chat with
+   several at once. Only 3 can be awake at a time, so you watch the rooms churn:
+   whoever's needed wakes up, whoever's idle gets tucked away. The **compute-saved
+   meter** shows the point of it all: 12 persistent, stateful agents are living on 3
+   pods' worth of hardware.
 
-```yaml
-name: substrate-hotel
-title: Agent Hotel — persistent agents, checkpointed (Agent Substrate)
-description: >-
-  12 named chat agents live in a hotel with only 3 rooms (workers). Each agent keeps its
-  whole conversation in RAM, yields its compute seconds after replying (checkpoint to
-  GCS), and is transparently restored — memory intact, often on a different worker — the
-  moment you message it again.
-gke_features:
-  - Zero-idle agents — self-suspend to snapshots seconds after replying
-  - Resume-on-request — atenet-router restores RAM state transparently
-  - 4x oversubscription — 12 persistent agents on a 3-pod WorkerPool
-  - Keyless Vertex AI — Workload Identity tokens re-fetched after every resume
-  - Golden snapshots — new guests check in instantly from a v0 checkpoint
-paths:
-  infra_dir: infra
-  cluster_dir: cluster
-  cluster_setup: cluster/install-substrate-hotel-prereq.sh
-  frontend_dir: frontend
-  playroom_slug: substrate-hotel
-requires:
-  crds: [workerpools.ate.dev, actortemplates.ate.dev]
-deployment_name: substrate-hotel-concierge-deployment
-gateway: { name: substrate-hotel-gw, class: gke-l7-global-external-managed }
-build:
-  - image: substrate-hotel          # one image: concierge + agent guest
-    context: .
-    dockerfile: app/Dockerfile
-template_vars: [NAMESPACE, PROJECT_NAME, REGION, ARTIFACT_REGISTRY_REPO, JWT_SECRET_KEY, GOOGLE_GENAI_USE_VERTEXAI]
-template_defaults:
-  NAMESPACE: default
-  SUBSTRATE_HOTEL_IMAGE: "${REGION}-docker.pkg.dev/${PROJECT_NAME}/${ARTIFACT_REGISTRY_REPO}/substrate-hotel:latest"
-hub_router: "hub_router:router"
+The proof that nothing is faked: every guest carries a `boot_id` minted once at process
+start. It survives sleep, storage, and migration between rooms — the same process really
+did come back to life.
+
+## What it teaches about Substrate
+
+| Concept | What Substrate means by it | Where you see it in the demo |
+| --- | --- | --- |
+| **Actor** | A stateful process instance — the unit that gets suspended and resumed | Each hotel guest |
+| **Worker / WorkerPool** | A pool of warm pods; each hosts at most one actor at a time | The 3 hotel rooms |
+| **Suspend (checkpoint)** | Freeze the actor's RAM + filesystem into a snapshot in GCS, freeing the worker | A guest going 💤 |
+| **Resume-on-request** | Traffic addressed to a suspended actor transparently restores it first | Messaging a sleeping guest just… works |
+| **Zero-idle** | The actor itself decides to yield when it has nothing to do | Guests go to sleep ~10 s after replying |
+| **Oversubscription** | Many actors mapped onto few workers | 12 guests, 3 rooms, 4× density |
+| **Golden snapshot** | A version-0 checkpoint taken at template creation; new actors start from it instantly instead of cold-booting | New guests "check in" in moments |
+| **Keyless credentials** | Nothing secret is baked into snapshots; agents authenticate to Vertex AI with Workload Identity tokens fetched fresh after every resume | Guests call Gemini with no API key anywhere |
+
+## Architecture
+
+Three layers, from what you see down to what does the magic:
+
+```
+   Browser ──── hotel floor-plan UI (static HTML/JS)
+      │
+      ▼
+   Concierge (FastAPI, a normal pod — the only "smart" service we write)
+      │  • serves the UI and the /api/state, /chat endpoints
+      │  • tells Substrate: create / suspend / resume guests (gRPC to ate-api-server)
+      │  • forwards each chat message "to the guest by name" via Substrate's router
+      ▼
+   Agent Substrate (the ate control plane, installed once per cluster)
+      │  • ate-api-server — control API (create/suspend/resume actors)
+      │  • atenet-router  — resolves "amara.hotel.…" to wherever Amara is,
+      │                     waking her first if she's suspended
+      │  • WorkerPool     — the 3 warm worker pods ("rooms"), gVisor-sandboxed
+      │  • GCS bucket     — where sleeping guests' checkpoints live
+      ▼
+   Guest agent (tiny HTTP server inside a sandboxed actor)
+         • keeps conversation history in plain Python memory — no database
+         • calls Gemini (Vertex AI, Workload Identity) to reply in persona
+         • ~10 s after its last reply, tells the concierge "I'm done, tuck me in"
 ```
 
-**Runtime ActorTemplate** (built by `template_manager.py`):
+The key flows:
 
-```yaml
-apiVersion: ate.dev/v1alpha1
-kind: ActorTemplate
-metadata: { name: guest-<digest12>, namespace: <POD_NAMESPACE> }
-spec:
-  pauseImage: "registry.k8s.io/pause:3.10.2@sha256:…"      # digest-pinned
-  snapshotsConfig: { onPause: Full, location: "gs://<project>-substrate-snapshots/substrate-hotel/" }
-  containers:
-    - name: guest
-      image: "<own imageID: …/substrate-hotel:latest@sha256:…>"  # digest-pinned (CRD requires '@')
-      command: ["uvicorn", "agent.server:app", "--host", "0.0.0.0", "--port", "80"]
-      readyz: { httpGet: { path: /readyz, port: 80 } }        # port is required upstream
-      env:
-        - { name: PORT, value: "80" }
-        - { name: CONCIERGE_URL, value: "http://substrate-hotel-concierge.<ns>.svc" }
-        - { name: LINGER_SECONDS, value: "10" }
-        - { name: GOOGLE_GENAI_USE_VERTEXAI, value: "<from ${GOOGLE_GENAI_USE_VERTEXAI}>" }
-        - { name: GOOGLE_CLOUD_PROJECT, value: "<from ${PROJECT_NAME}>" }
-        - { name: GOOGLE_CLOUD_LOCATION, value: "<from ${REGION}>" }
-  workerSelector: { matchLabels: { workload: substrate-hotel } }
-```
+- **Chat**: browser → concierge → Substrate router (addressed by guest *name*, not pod) →
+  the guest's actor → Gemini → reply. The concierge never needs to know where a guest
+  physically is.
+- **Sleep (zero-idle)**: the guest itself decides it's idle and asks to be suspended; the
+  concierge executes the authenticated suspend call on its behalf, and a background
+  sweeper catches any guest that forgets. Checkpoint goes to GCS; the room frees up.
+- **Wake**: a new message for a sleeping guest hits the router, which restores the
+  checkpoint onto any free room (evicting an idle guest if the hotel is full), then
+  delivers the message. RAM, conversation, `boot_id` — all intact.
 
-**Concierge API** (hub-JWT-gated via `hub_auth` except `/healthz`, static UI, `/internal/yield`):
+A few deliberate design choices, in plain terms:
 
-- `GET /api/state` → `{mode, guests: [{name, persona, emoji, status: vacant|checking-in|awake|suspending|suspended|waking, worker_pod, messages, boot_id}], workers: [{pod, node, occupant}], meter: {guests_checked_in, workers, awake, suspended, oversubscription}}`
-  from `ListActors(atespace="hotel")` + `ListWorkers` filtered to this WorkerPool.
-- `POST /api/guests/{name}/chat {message}` → check-in on demand (`CreateActor` from the
-  current template) → proxy through atenet-router → `{reply, boot_id, history_len, worker_pod, was_suspended}`.
-- `GET /api/guests/{name}/history` → proxied (also demonstrates wake-on-read).
-- `POST /api/open` → background check-in of all 12 guests (3 at a time), suspending each once ready.
-- `POST /api/reset` → delete all actors + stale `guest-*` templates, re-ensure template.
-- `POST /internal/yield {guest}` → `SuspendActor` iff idle ≥ linger (tolerates FAILED_PRECONDITION/NOT_FOUND).
+- **The guest holds its memory in RAM on purpose.** No database, no session store —
+  demonstrating that Substrate's checkpointing *is* the persistence layer.
+- **No secrets in snapshots.** The agents use Vertex AI with Workload Identity (the same
+  pattern as the hub's `agent-sandbox` feature), so credentials are re-fetched after
+  every resume instead of being frozen into a checkpoint. If Vertex isn't available, the
+  guests fall back to scripted in-character replies so the demo always works.
+- **One container image plays both roles** (concierge and guest), and the concierge
+  registers the guest template with Substrate at startup using its own image digest —
+  Substrate requires digest-pinned images, and this keeps rebuilds automatic.
+- **Waking takes ~30 seconds** (checkpoint restore from GCS). The UI is honest about it —
+  a "waking…" state, not a spinner — and the load balancer timeout is raised so the
+  request survives the wait.
 
-**Agent server**: `boot_id = uuid4()` at process start — its stability across
-suspend/resume is the proof RAM survived; `/readyz` returns 200 immediately (the golden
-actor must go Ready without calling Gemini).
+## How it runs
 
-## Hub-side changes (gke_all repo)
+Two modes, same code:
 
-1. Push this repo: `git remote add origin https://github.com/ragoler/substrate.git`, commit, push `main`.
-2. `git submodule add https://github.com/ragoler/substrate.git features/substrate-hotel` + commit.
-3. `showcase_admin/requirements-dev.txt`: **no change**. `infra/main-app.yaml`: **no change** (both verified).
-4. Add `tests/integration/test_substrate_hotel_mock.py` (list features → mock deploy → `/config`, `/state`, `/guests/<name>/chat` shapes → teardown).
-5. Ops when going live: `./scripts/build_and_push.sh --feature substrate-hotel`; re-run `./build_infra.sh` (applies `cluster/` + runs the prereq hook — a no-op where overcommit already installed the plane, plus the idempotent Vertex IAM/WI bindings).
+- **Inside the GKE Feature Showcase Hub** (`gke_all`): this repo mounts as a git
+  submodule at `features/substrate-hotel/`. The hub deploys it into its own namespace
+  from a dashboard card; the playroom UI appears at `/substrate-hotel/`. The hub's
+  offline mock mode shows a canned hotel with scripted replies, so the UI works even
+  with no cluster at all.
+- **Standalone**: three scripts — `setup_infra.sh` (create a GKE cluster and install the
+  Substrate control plane), `deploy_app.sh` (build and deploy the hotel),
+  `verify_setup.sh` (an automated end-to-end proof: chat → sleep → wake → memory
+  intact). Configuration comes from a `.env` file.
 
-## Phased build order
+Both modes share the same cluster prerequisite: the Agent Substrate control plane
+(pinned to the same upstream commit the hub's existing `substrate-overcommit` feature
+uses), installed once per cluster by an idempotent script.
 
-1. **Logic offline** (no cluster, no docker): scaffold repo; `personas.py`, agent server +
-   canned `llm.py`, concierge against a `FakeAteClient` (in-memory 3-slot hotel simulator,
-   reused by tests); frontend served locally by the concierge. All `tests/` green.
-2. **Hub MOCK**: `feature.yaml` + `hub_router.py`; mount into gke_all; Hub `MODE=MOCK`;
-   playroom renders at `/substrate-hotel/`; hub mock test + `test_manifests.py`
-   (`${VAR}` coverage, no Namespace kind, names match descriptor).
-3. **Real plane** (existing showcase cluster, scratch namespace): verify in order —
-   (a) imageID digest + runtime ActorTemplate + golden snapshot Ready,
-   (b) Vertex ADC from inside a gVisor guest (metadata reachability + IAM/WI binding),
-   (c) chat → yield → suspend → chat → resume with stable `boot_id`,
-   (d) `GCPBackendPolicy` stretches the LB timeout past a cold resume.
-4. **Standalone**: `setup_infra.sh` on a fresh cluster; `verify_setup.sh` end-to-end; docs.
-5. **Hub LIVE + polish**: deploy via the Hub UI; LB-provisioning gate; worker-lane churn
-   animation; feature.md §10 pre-merge checklist line-by-line.
+## Repository tour
 
-## Verification
+| Path | What it is |
+| --- | --- |
+| `app/agent/` | The guest: a tiny HTTP chat server + Gemini client |
+| `app/concierge.py` | The concierge API and UI server |
+| `app/ate_client.py` | The gRPC client that talks to Substrate's control plane |
+| `app/personas.py` | The 12 guests — names, personalities, system prompts |
+| `frontend/` | The hotel floor-plan UI |
+| `infra/` | Kubernetes manifests the hub (or `deploy_app.sh`) applies: concierge, WorkerPool, gateway |
+| `cluster/` | One-per-cluster prerequisites: the Substrate control-plane installer |
+| `hub_router.py`, `feature.yaml` | The hub integration: feature descriptor + mock mode |
+| `tests/` | Offline test suite (the whole hotel runs against a fake Substrate for tests) |
 
-- `pytest tests/` in this repo (manifest rendering, agent server, concierge vs FakeAteClient, mock router).
-- gke_all: `.venv/bin/pytest tests/` including the new mock integration test.
-- `verify_setup.sh` — the automated standalone smoke test (the suspend/resume memory proof).
-- Manual E2E: hub deploy → chat with a guest → card flips to 💤 after ~10 s → message it →
-  "waking…" → the reply references the earlier conversation, `boot_id` unchanged, worker
-  usually different.
+## Build plan (summary)
 
-## Risks / must-verify during implementation
+1. **Offline first** — the entire hotel (concierge, guests, UI) runs locally against a
+   fake in-memory Substrate; full test suite, no cluster needed.
+2. **Hub mock mode** — the card and playroom render in the hub with canned data.
+3. **Real Substrate plane** — verify the risky bits in order: golden snapshots, Vertex
+   calls from inside the sandbox, the sleep/wake cycle with a stable `boot_id`.
+4. **Standalone path** — fresh cluster from scratch via the three scripts.
+5. **Hub live + polish** — deploy from the dashboard, animations, checklist.
 
-1. **Vertex ADC from gVisor actors** — egress precedent exists (upstream
-   claude-code-multiplex calls api.anthropic.com from actors), but the metadata-server
-   path and the identity the actor traffic carries (worker pod's KSA vs node SA) must be
-   verified early; fallback is the concierge `/llm` proxy (D3).
-2. **`imageID` format** on GKE containerd (`repo:tag@sha256:…`; handle `docker-pullable://`
-   prefix and empty-while-pulling).
-3. **Template lifecycle**: semantics of deleting an old `guest-<digest>` template while its
-   actors still exist — GC old templates only in `/api/reset`.
-4. **Slot contention**: all 3 workers busy + a 4th guest woken — confirm the router blocks
-   and succeeds within 120 s (the sweeper frees a slot) rather than erroring.
-5. **Conversation RAM is persisted in GCS snapshots** (document; no credentials are,
-   thanks to ADC).
-6. **Upstream SHA drift**: keep the prereq pin in lockstep with `substrate-overcommit` —
-   bumping either alone changes the shared `ate-system` plane for both.
-7. **Cluster-scoped RBAC from `infra/` leaks past namespace teardown** — deterministic
-   names, re-apply-safe; note in README.
-8. **Projected-token acceptance** re-check once on the live plane before removing the
-   TokenRequest fallback from `ate_client.py`.
+The main open risk: whether guests can reach Vertex AI from inside their gVisor sandbox
+(upstream's Claude Code demo suggests yes). If not, the concierge proxies the LLM call —
+one environment variable, no redesign.
