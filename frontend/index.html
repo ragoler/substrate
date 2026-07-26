@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agent Hotel — Agent Substrate demo</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <div>
+      <h1>🏨 Agent Hotel</h1>
+      <p class="sub">12 stateful AI agents · 3 rooms · powered by
+        <a href="https://github.com/agent-substrate/substrate" target="_blank" rel="noopener">Agent Substrate</a></p>
+    </div>
+    <div class="header-actions">
+      <button id="btn-open">Open the hotel</button>
+      <button id="btn-reset" class="danger">Reset</button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner hidden"></div>
+
+  <section class="meter-row">
+    <div class="stat"><span id="m-checkedin">–</span><label>guests checked in</label></div>
+    <div class="stat"><span id="m-workers">–</span><label>rooms (workers)</label></div>
+    <div class="stat"><span id="m-awake">–</span><label>awake</label></div>
+    <div class="stat"><span id="m-suspended">–</span><label>sleeping in GCS</label></div>
+    <div class="stat highlight"><span id="m-saved">–</span><label>compute saved</label></div>
+  </section>
+
+  <section>
+    <h2>Rooms</h2>
+    <div id="rooms" class="rooms"></div>
+  </section>
+
+  <section>
+    <h2>Guests</h2>
+    <div id="guests" class="guests"></div>
+  </section>
+
+  <aside id="drawer" class="drawer hidden">
+    <div class="drawer-head">
+      <h3 id="drawer-title">Chat</h3>
+      <div class="drawer-meta" id="drawer-meta"></div>
+      <button id="drawer-close" title="Close">✕</button>
+    </div>
+    <div id="chat-log" class="chat-log"></div>
+    <form id="chat-form">
+      <input id="chat-input" type="text" placeholder="Say something…" autocomplete="off" />
+      <button type="submit" id="chat-send">Send</button>
+    </form>
+  </aside>
+
+  <script src="app.js"></script>
+</body>
+</html>

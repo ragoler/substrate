@@ -1,0 +1,11 @@
+# Concierge + guest agent runtime deps (one image serves both roles).
+fastapi>=0.111
+uvicorn>=0.29
+httpx>=0.27
+pydantic>=2.7
+# Control plane (concierge only; guests never import these)
+grpcio>=1.70
+protobuf>=6.31.0
+kubernetes>=29.0
+# Gemini on Vertex AI via ADC (keyless)
+google-genai>=1.0

@@ -1,0 +1,24 @@
+# The hotel's rooms: a 3-worker pool that 12 guest actors overcommit onto.
+# Suspended guests hold no room, so the pool serves 4x more persistent agents
+# than it has pods.
+#
+# The ate-controller reconciles this into a Deployment named
+# "<workerpool>-deployment" (substrate-hotel-deployment) — distinct from the
+# concierge's substrate-hotel-concierge-deployment.
+#
+# The `workload: substrate-hotel` label is what the ActorTemplate's
+# workerSelector (and the concierge's CreateActor calls) bind to.
+apiVersion: ate.dev/v1alpha1
+kind: WorkerPool
+metadata:
+  name: substrate-hotel
+  namespace: ${NAMESPACE}
+  labels:
+    workload: substrate-hotel
+spec:
+  replicas: 3
+  # gVisor (runsc) sandbox class — the default; atelet fetches runsc itself,
+  # no node-level --enable-sandbox needed.
+  sandboxClass: gvisor
+  # Built and pushed by cluster/install-substrate-hotel-prereq.sh via `ko`.
+  ateomImage: ${REGION}-docker.pkg.dev/${PROJECT_NAME}/${ARTIFACT_REGISTRY_REPO}/ateom-gvisor:latest

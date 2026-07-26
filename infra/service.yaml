@@ -1,0 +1,14 @@
+# ClusterIP for the concierge. Port 80 -> 8000 (uvicorn). Also the address
+# guests use for /internal/yield and the /llm fallback:
+#   http://substrate-hotel-concierge.<namespace>.svc
+apiVersion: v1
+kind: Service
+metadata:
+  name: substrate-hotel-concierge
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: substrate-hotel-concierge
+  ports:
+    - port: 80
+      targetPort: 8000

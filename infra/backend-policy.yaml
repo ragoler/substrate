@@ -1,0 +1,15 @@
+# Waking a sleeping guest means restoring a checkpoint from GCS — tens of
+# seconds. The ALB's default 30 s backend timeout would cut those requests
+# off mid-wake, so stretch it. (The concierge's own router timeout is 120 s.)
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: substrate-hotel-concierge-timeout
+  namespace: ${NAMESPACE}
+spec:
+  default:
+    timeoutSec: 180
+  targetRef:
+    group: ""
+    kind: Service
+    name: substrate-hotel-concierge

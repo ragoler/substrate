@@ -1,0 +1,69 @@
+# RBAC for the concierge. Named 00- so it sorts (and applies) before the
+# workload manifests.
+#
+# The concierge needs exactly three permissions:
+#   1. read its OWN pod — to learn its image digest (containerStatuses[].imageID)
+#      so it can register a digest-pinned ActorTemplate (the ate.dev CRD
+#      rejects tag-only images);
+#   2. manage ActorTemplates in its namespace (create at startup, prune on reset);
+#   3. read ONE secret in ate-system: servicedns-ca, the trust anchor for the
+#      TLS connection to ate-api-server. That is cross-namespace, hence the
+#      name-scoped ClusterRole (resourceNames narrows it to just that secret).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: substrate-hotel-concierge
+  namespace: ${NAMESPACE}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: substrate-hotel-concierge
+  namespace: ${NAMESPACE}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: ["ate.dev"]
+    resources: ["actortemplates"]
+    verbs: ["get", "list", "create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: substrate-hotel-concierge
+  namespace: ${NAMESPACE}
+subjects:
+  - kind: ServiceAccount
+    name: substrate-hotel-concierge
+    namespace: ${NAMESPACE}
+roleRef:
+  kind: Role
+  name: substrate-hotel-concierge
+  apiGroup: rbac.authorization.k8s.io
+---
+# Cluster-scoped by necessity (cross-namespace secret read), but name-scoped
+# to the single CA secret. NOTE: cluster-scoped objects survive a namespace
+# teardown; names are deterministic and re-applies are safe.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: substrate-hotel-servicedns-ca-reader
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["servicedns-ca"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: substrate-hotel-servicedns-ca-reader
+subjects:
+  - kind: ServiceAccount
+    name: substrate-hotel-concierge
+    namespace: ${NAMESPACE}
+roleRef:
+  kind: ClusterRole
+  name: substrate-hotel-servicedns-ca-reader
+  apiGroup: rbac.authorization.k8s.io

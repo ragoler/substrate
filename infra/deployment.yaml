@@ -1,0 +1,76 @@
+# The concierge — the only Deployment this demo ships. (The 3 worker pods
+# come from the WorkerPool CR, reconciled by the ate-controller.)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: substrate-hotel-concierge-deployment
+  namespace: ${NAMESPACE}
+  labels:
+    app: substrate-hotel-concierge
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: substrate-hotel-concierge
+  template:
+    metadata:
+      labels:
+        app: substrate-hotel-concierge
+    spec:
+      serviceAccountName: substrate-hotel-concierge
+      containers:
+        - name: concierge
+          image: ${SUBSTRATE_HOTEL_IMAGE}
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          env:
+            - name: ATE_MODE
+              value: "real"
+            # Downward API — the concierge reads its own pod to learn its
+            # image digest (see app/template_manager.py).
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # Vertex AI via ADC — plain values only; no key anywhere.
+            - name: GOOGLE_GENAI_USE_VERTEXAI
+              value: "${GOOGLE_GENAI_USE_VERTEXAI}"
+            - name: GOOGLE_CLOUD_PROJECT
+              value: "${PROJECT_NAME}"
+            - name: GOOGLE_CLOUD_LOCATION
+              value: "${REGION}"
+            # Where guest snapshots land (must match the prereq's bucket).
+            - name: SNAPSHOTS_LOCATION
+              value: "gs://${PROJECT_NAME}-substrate-snapshots/substrate-hotel/"
+          volumeMounts:
+            # Bearer token for ate-api-server (--auth-mode=jwt accepts any
+            # cluster-issuer SA token with this audience). Kubelet rotates it.
+            - name: ate-api-token
+              mountPath: /var/run/secrets/tokens
+              readOnly: true
+          startupProbe:
+            httpGet: { path: /healthz, port: 8000 }
+            failureThreshold: 30
+            periodSeconds: 2
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8000 }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8000 }
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: "1", memory: 512Mi }
+      volumes:
+        - name: ate-api-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: ate-api-token
+                  audience: api.ate-system.svc
+                  expirationSeconds: 3600

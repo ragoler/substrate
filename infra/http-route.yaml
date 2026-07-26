@@ -1,0 +1,17 @@
+# Everything on the Gateway goes to the concierge (UI + API).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: substrate-hotel-route
+  namespace: ${NAMESPACE}
+spec:
+  parentRefs:
+    - name: substrate-hotel-gw
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: substrate-hotel-concierge
+          port: 80

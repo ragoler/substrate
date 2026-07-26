@@ -1,0 +1,16 @@
+# Dedicated Gateway (its own external IP / load balancer). The modern
+# gke-l7-global-external-managed class provisions a dedicated ALB per Gateway.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: substrate-hotel-gw
+  namespace: ${NAMESPACE}
+spec:
+  gatewayClassName: gke-l7-global-external-managed
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Same

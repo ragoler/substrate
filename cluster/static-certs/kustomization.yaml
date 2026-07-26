@@ -1,0 +1,158 @@
+# Static-certs overlay for the FULL ate plane on a plain GKE Standard cluster.
+#
+# Upstream's jwt overlay (manifests/ate-install/jwt/) assumes the alpha
+# agent-identity data plane: PodCertificate projected volumes (signerName
+# servicedns.podcert.ate.dev/identity) for every serving/client credential, and
+# ClusterTrustBundle projected volumes for the trust anchors — both served only
+# on a GKE alpha cluster. This overlay produces the SAME deployed shape with the
+# alpha sources swapped for plain Secrets minted once at install time by
+# install-substrate-overcommit-prereq.sh:
+#
+#   servicedns-static-certs  key credential-bundle.pem  (PKCS8 key + leaf + CA —
+#                            the exact PEM sequence cmd/ateapi credbundle.Parse
+#                            expects; leaf SANs cover api / atenet-router /
+#                            valkey-cluster / *.valkey-cluster-service)
+#   servicedns-ca            key trust-bundle.pem       (CA cert PEM)
+#   workerpool-ca-certs      key trust-bundle.pem       (same CA PEM)
+#
+# This file is COPIED into <upstream>/manifests/ate-install/static-certs/ by the
+# install script before `ko apply -k` — the ../*.yaml resource refs resolve
+# there, not in this repo. pod-certificate-controller.yaml is deliberately
+# ABSENT from resources: it is the alpha-API consumer this overlay replaces.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../ate-api-server.yaml
+  - ../ate-controller.yaml
+  - ../atelet.yaml
+  - ../atenet-dns.yaml
+  - ../atenet-router.yaml
+  - ../valkey.yaml
+
+patches:
+  # --- 1. Replace alpha volume sources with static Secrets (guarded JSON6902).
+  # Index-based replace is the only safe mechanism here: a strategic-merge on a
+  # volume would MERGE `secret:` into the existing `projected:` source, leaving
+  # an invalid two-source volume. Each replace is preceded by an `op: test` on
+  # the volume NAME so any upstream reordering fails loudly instead of silently
+  # patching the wrong volume. These run FIRST (before patches.yaml) so the
+  # indices refer to the pristine base manifests.
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: ate-api-server-deployment
+      namespace: ate-system
+    patch: |-
+      - op: test
+        path: /spec/template/spec/volumes/0/name
+        value: servicedns
+      - op: replace
+        path: /spec/template/spec/volumes/0
+        value:
+          name: servicedns
+          secret:
+            secretName: servicedns-static-certs
+      - op: test
+        path: /spec/template/spec/volumes/4/name
+        value: workerpool-ca-certs
+      - op: replace
+        path: /spec/template/spec/volumes/4
+        value:
+          name: workerpool-ca-certs
+          secret:
+            secretName: workerpool-ca-certs
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: atenet-router
+      namespace: ate-system
+    patch: |-
+      - op: test
+        path: /spec/template/spec/volumes/1/name
+        value: servicedns
+      - op: replace
+        path: /spec/template/spec/volumes/1
+        value:
+          name: servicedns
+          secret:
+            secretName: servicedns-static-certs
+  - target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: valkey-cluster
+      namespace: ate-system
+    patch: |-
+      - op: test
+        path: /spec/template/spec/volumes/1/name
+        value: servicedns
+      - op: replace
+        path: /spec/template/spec/volumes/1
+        value:
+          name: servicedns
+          secret:
+            secretName: servicedns-static-certs
+  - target:
+      group: batch
+      version: v1
+      kind: Job
+      name: valkey-cluster-init
+      namespace: ate-system
+    patch: |-
+      - op: test
+        path: /spec/template/spec/volumes/0/name
+        value: servicedns
+      - op: replace
+        path: /spec/template/spec/volumes/0
+        value:
+          name: servicedns
+          secret:
+            secretName: servicedns-static-certs
+
+  # --- 2. JWT client-auth wiring (mirror of ../jwt/patches.yaml with the
+  # servicedns-ca ClusterTrustBundle source swapped for the Secret).
+  - path: patches.yaml
+
+  # --- 3. Args: same jwt-mode flags as the upstream jwt overlay. Note the base
+  # manifests already set --ateapi-ca-file=/run/servicedns-ca/trust-bundle.pem
+  # on controller + router (the mount patches.yaml provides), so no ca-file
+  # override is needed here.
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: ate-api-server-deployment
+      namespace: ate-system
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --auth-mode=jwt
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: ate-controller
+      namespace: ate-system
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --ateapi-auth=jwt
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --ateapi-token-file=/run/ateapi-token/token
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: atenet-router
+      namespace: ate-system
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --ateapi-auth=jwt
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --ateapi-token-file=/run/ateapi-token/token

@@ -1,0 +1,65 @@
+# Strategic-merge patches: JWT client-auth volumes for ate-controller +
+# atenet-router. Mirror of upstream manifests/ate-install/jwt/patches.yaml with
+# ONE change: the servicedns-ca volume sources a plain Secret (minted by
+# install-substrate-overcommit-prereq.sh) instead of the alpha
+# ClusterTrustBundle projection. Strategic-merge is safe here because both
+# volumes are NET-NEW by name (ate-controller has no base volumes; the router's
+# base volumes are envoy-config + servicedns) — nothing merges into an existing
+# projected source.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ate-controller
+  namespace: ate-system
+spec:
+  template:
+    spec:
+      containers:
+      - name: ate-controller
+        volumeMounts:
+        - name: ateapi-token
+          mountPath: /run/ateapi-token
+          readOnly: true
+        - name: servicedns-ca
+          mountPath: /run/servicedns-ca
+          readOnly: true
+      volumes:
+      - name: ateapi-token
+        projected:
+          sources:
+          - serviceAccountToken:
+              audience: api.ate-system.svc
+              expirationSeconds: 3600
+              path: token
+      - name: servicedns-ca
+        secret:
+          secretName: servicedns-ca
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: atenet-router
+  namespace: ate-system
+spec:
+  template:
+    spec:
+      containers:
+      - name: atenet-router
+        volumeMounts:
+        - name: ateapi-token
+          mountPath: /run/ateapi-token
+          readOnly: true
+        - name: servicedns-ca
+          mountPath: /run/servicedns-ca
+          readOnly: true
+      volumes:
+      - name: ateapi-token
+        projected:
+          sources:
+          - serviceAccountToken:
+              audience: api.ate-system.svc
+              expirationSeconds: 3600
+              path: token
+      - name: servicedns-ca
+        secret:
+          secretName: servicedns-ca
