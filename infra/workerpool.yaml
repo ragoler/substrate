@@ -18,6 +18,12 @@ metadata:
     workload: substrate-hotel
 spec:
   replicas: ${WORKER_REPLICAS}
+  # Scheduling for the worker pods. With USE_COMPUTE_CLASS=TRUE this renders
+  # to {"cloud.google.com/compute-class": "hotel-rooms"} so the rooms land on
+  # nodes auto-provisioned by cluster/compute-class.yaml; otherwise it renders
+  # to {} (any node in the default pool).
+  template:
+    nodeSelector: ${WORKER_NODE_SELECTOR}
   # gVisor (runsc) sandbox class — the default; atelet fetches runsc itself,
   # no node-level --enable-sandbox needed.
   sandboxClass: gvisor

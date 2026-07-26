@@ -88,6 +88,13 @@ export GOOGLE_GENAI_USE_VERTEXAI="${GOOGLE_GENAI_USE_VERTEXAI:-TRUE}"
 # Hotel sizing knobs (see .env.example).
 export GUEST_COUNT="${GUEST_COUNT:-12}"
 export WORKER_REPLICAS="${WORKER_REPLICAS:-3}"
+# Rooms scheduling: with USE_COMPUTE_CLASS=TRUE the worker pods select the
+# hotel-rooms ComputeClass (NAP provisions nodes for them); otherwise any node.
+if [ "${USE_COMPUTE_CLASS:-FALSE}" = "TRUE" ]; then
+  export WORKER_NODE_SELECTOR='{"cloud.google.com/compute-class": "hotel-rooms"}'
+else
+  export WORKER_NODE_SELECTOR='{}'
+fi
 for f in "${ROOT}"/infra/*.yaml; do
   base=$(basename "$f")
   echo "    applying ${base}"

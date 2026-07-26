@@ -1,0 +1,28 @@
+# Custom Compute Class for the hotel's rooms (the WorkerPool's worker pods).
+# Opt-in: applied by setup_infra.sh when USE_COMPUTE_CLASS=TRUE, and selected
+# by the WorkerPool via nodeSelector cloud.google.com/compute-class:
+# hotel-rooms (see infra/workerpool.yaml). With Node Auto-Provisioning
+# enabled, GKE then creates right-sized node pools for the rooms on demand —
+# and "+ Room" in the UI becomes a two-layer story: Substrate scales the
+# WorkerPool, and NAP grows the cluster underneath it when needed.
+#
+# Deliberately ON-DEMAND (spot: false): rooms are long-lived warm pods, and a
+# Spot preemption would kill an AWAKE guest's un-checkpointed RAM — breaking
+# the demo's memory-survival proof. (Suspended guests would be fine; flip the
+# priorities to spot: true if you want to demo that failure mode cheaply.)
+apiVersion: cloud.google.com/v1
+kind: ComputeClass
+metadata:
+  name: hotel-rooms
+spec:
+  priorities:
+    - machineFamily: e2
+    - machineFamily: n2d
+    - machineFamily: n2
+  # Let GKE create node pools for this class on demand (requires NAP).
+  nodePoolAutoCreation:
+    enabled: true
+  # If none of the preferred families are available, scale up anyway.
+  whenUnsatisfiable: ScaleUpAnyway
+  activeMigration:
+    optimizeRulePriority: true

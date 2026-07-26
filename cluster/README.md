@@ -31,5 +31,14 @@ unpinned builds crash-loop on a Standard cluster. If you bump the pin, be
 aware the plane in `ate-system` is shared by anything else using Substrate on
 the cluster.
 
+## Optional: Custom Compute Class for the rooms
+
+`compute-class.yaml` (applied by `setup_infra.sh` only when
+`USE_COMPUTE_CLASS=TRUE`) defines the `hotel-rooms` ComputeClass. Together
+with Node Auto-Provisioning it gives the WorkerPool's worker pods their own
+auto-created, right-sized node pools — the default fixed-pool path needs
+neither. On-demand machine families only: rooms hold awake guests'
+un-checkpointed RAM, which a Spot preemption would destroy.
+
 Normally you don't run this directly — `setup_infra.sh` calls it with the
 right environment.

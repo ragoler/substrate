@@ -18,6 +18,7 @@ FAKE_VARS = {
     "GOOGLE_GENAI_USE_VERTEXAI": "TRUE",
     "GUEST_COUNT": "12",
     "WORKER_REPLICAS": "3",
+    "WORKER_NODE_SELECTOR": "{}",
 }
 
 
@@ -102,6 +103,34 @@ def test_concierge_env_is_keyless():
         names = {e["name"] for e in env}
         assert {"GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_CLOUD_PROJECT",
                 "GOOGLE_CLOUD_LOCATION"} <= names
+
+
+def test_workerpool_node_selector_renders_both_ways():
+    """deploy_app.sh renders {} (default pool) or the compute-class selector."""
+    path = os.path.join(INFRA, "workerpool.yaml")
+
+    default = yaml.safe_load(render(path))
+    assert default["spec"]["template"]["nodeSelector"] == {}
+
+    ccc_vars = dict(FAKE_VARS)
+    ccc_vars["WORKER_NODE_SELECTOR"] = (
+        '{"cloud.google.com/compute-class": "hotel-rooms"}'
+    )
+    text = open(path).read()
+    for k, v in ccc_vars.items():
+        text = text.replace("${" + k + "}", v)
+    ccc = yaml.safe_load(text)
+    assert ccc["spec"]["template"]["nodeSelector"] == {
+        "cloud.google.com/compute-class": "hotel-rooms"
+    }
+
+    # The selector must match the ComputeClass the installer applies.
+    cc = yaml.safe_load(
+        open(os.path.join(ROOT, "cluster", "compute-class.yaml"))
+    )
+    assert cc["kind"] == "ComputeClass"
+    assert cc["metadata"]["name"] == "hotel-rooms"
+    assert cc["spec"]["nodePoolAutoCreation"]["enabled"] is True
 
 
 def test_projected_token_audience():

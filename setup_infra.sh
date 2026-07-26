@@ -50,6 +50,7 @@ if [ "$MODE" = "delete" ] || [ "$MODE" = "delete-cluster" ]; then
     kubectl delete namespace ate-system --ignore-not-found --timeout=180s || true
     kubectl delete crd workerpools.ate.dev actortemplates.ate.dev sandboxconfigs.ate.dev \
       --ignore-not-found || true
+    kubectl delete -f "${ROOT}/cluster/compute-class.yaml" --ignore-not-found || true
   else
     echo "Cluster ${CLUSTER_NAME} does not exist; nothing to remove."
   fi
@@ -64,9 +65,27 @@ fi
 # --- Step 1: Create the GKE cluster -------------------------------------------
 # Workload Identity is what makes the keyless-Vertex story work: guests and
 # the concierge fetch ADC tokens from the metadata server, no API key anywhere.
+#
+# With USE_COMPUTE_CLASS=TRUE, Node Auto-Provisioning is enabled so the
+# hotel-rooms ComputeClass (cluster/compute-class.yaml) can create node pools
+# for the WorkerPool's rooms on demand.
+USE_COMPUTE_CLASS="${USE_COMPUTE_CLASS:-FALSE}"
+NAP_FLAGS=()
+if [ "${USE_COMPUTE_CLASS}" = "TRUE" ]; then
+  NAP_FLAGS=(--enable-autoprovisioning
+             --min-cpu 0 --max-cpu "${MAX_CPU:-100}"
+             --min-memory 0 --max-memory "${MAX_MEMORY:-400}")
+fi
+
 echo "=== Step 1: Creating GKE cluster ${CLUSTER_NAME} (${ZONE}) ==="
 if cluster_exists; then
   echo "Cluster ${CLUSTER_NAME} already exists. Skipping creation."
+  if [ "${USE_COMPUTE_CLASS}" = "TRUE" ]; then
+    echo "Ensuring Node Auto-Provisioning is enabled (USE_COMPUTE_CLASS=TRUE)..."
+    gcloud container clusters update "${CLUSTER_NAME}" \
+      --project="${PROJECT_ID}" --zone="${ZONE}" "${NAP_FLAGS[@]}" \
+      || echo "NAP update failed; continuing (it may already be enabled)."
+  fi
 else
   gcloud container clusters create "${CLUSTER_NAME}" \
     --project="${PROJECT_ID}" \
@@ -74,11 +93,17 @@ else
     --machine-type="${MACHINE_TYPE}" \
     --num-nodes="${NUM_NODES}" \
     --gateway-api=standard \
-    --workload-pool="${PROJECT_ID}.svc.id.goog"
+    --workload-pool="${PROJECT_ID}.svc.id.goog" \
+    ${NAP_FLAGS[@]+"${NAP_FLAGS[@]}"}
 fi
 
 echo "=== Step 2: Getting cluster credentials ==="
 gcloud container clusters get-credentials "${CLUSTER_NAME}" --project="${PROJECT_ID}" --zone="${ZONE}"
+
+if [ "${USE_COMPUTE_CLASS}" = "TRUE" ]; then
+  echo "=== Step 2b: Applying the hotel-rooms ComputeClass ==="
+  kubectl apply -f "${ROOT}/cluster/compute-class.yaml"
+fi
 
 # --- Step 3: Artifact Registry (the prereq's ko build pushes here) -------------
 echo "=== Step 3: Ensuring Artifact Registry repo ${ARTIFACT_REGISTRY_REPO} ==="

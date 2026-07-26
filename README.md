@@ -41,6 +41,16 @@ resizes the worker Deployment). Scaling rooms *down* below the number of
 awake guests is itself a demo: the evicted guest is suspended to a snapshot
 and comes back, memory intact, on its next message.
 
+**Node provisioning is flexible too.** By default everything runs on the
+fixed default node pool. Set `USE_COMPUTE_CLASS=TRUE` in `.env` (before
+`setup_infra.sh`) to enable Node Auto-Provisioning plus a Custom Compute
+Class ([cluster/compute-class.yaml](cluster/compute-class.yaml)): the rooms
+then select `cloud.google.com/compute-class: hotel-rooms`, and GKE creates
+right-sized nodes for them on demand — "+ Room" scales the WorkerPool *and*,
+when capacity runs out, the cluster underneath it. The class is on-demand
+(not Spot) on purpose: a Spot preemption would kill an awake guest's
+un-checkpointed RAM.
+
 Gemini replies use **Vertex AI with Workload Identity** — no API key
 anywhere, nothing secret ever frozen into a snapshot. Set
 `GOOGLE_GENAI_USE_VERTEXAI=FALSE` in `.env` to skip Vertex entirely; guests
