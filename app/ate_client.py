@@ -269,6 +269,31 @@ class RealAteClient:
             if w.worker_pool == WORKER_POOL
         ]
 
+    async def set_room_count(self, count: int) -> int:
+        """Scale the hotel by patching the WorkerPool's replicas.
+
+        The ate-controller reconciles the worker Deployment to the new size;
+        new rooms take a little while to warm up. Shrinking may evict an
+        awake guest's worker — its next message resumes it from a snapshot,
+        which is itself a nice demo of the mechanics.
+        """
+        def _patch():
+            from kubernetes import client, config
+
+            config.load_incluster_config()
+            client.CustomObjectsApi().patch_namespaced_custom_object(
+                group="ate.dev", version="v1alpha1",
+                namespace=os.environ.get("POD_NAMESPACE", "default"),
+                plural="workerpools", name=WORKER_POOL,
+                body={"spec": {"replicas": count}},
+            )
+
+        try:
+            await asyncio.to_thread(_patch)
+        except Exception as e:
+            raise AteError(502, f"WorkerPool patch failed: {e}")
+        return count
+
     # -- data plane (resume-on-request) --------------------------------------
     async def _router(self, method: str, name: str, path: str, json_body=None) -> dict:
         import httpx
@@ -309,7 +334,10 @@ class FakeAteClient:
       * RAM state (history, boot_id) survives suspend/resume.
     """
 
-    def __init__(self, slots: int = 3, resume_latency: float = 0.0):
+    def __init__(self, slots: int | None = None, resume_latency: float = 0.0):
+        if slots is None:
+            slots = int(os.environ.get("WORKER_REPLICAS", "3"))
+        self._next_slot = slots
         self.slots = [f"fake-worker-{i}" for i in range(slots)]
         self.resume_latency = resume_latency
         self.actors: dict[str, dict] = {}  # name -> {status, worker, boot_id, history}
@@ -362,6 +390,23 @@ class FakeAteClient:
             {"pod": s, "node": "fake-node", "occupant": occupants.get(s)}
             for s in self.slots
         ]
+
+    async def set_room_count(self, count: int) -> int:
+        occupied = {a["worker"] for a in self.actors.values() if a["worker"]}
+        while len(self.slots) < count:
+            self.slots.append(f"fake-worker-{self._next_slot}")
+            self._next_slot += 1
+        while len(self.slots) > count:
+            # Drop a free slot; mimic real eviction if only occupied ones remain
+            # (the guest's RAM lives on — its next message resumes it).
+            free = [s for s in self.slots if s not in occupied]
+            victim = free[-1] if free else self.slots[-1]
+            self.slots.remove(victim)
+            for actor in self.actors.values():
+                if actor["worker"] == victim:
+                    actor["status"] = "suspended"
+                    actor["worker"] = None
+        return len(self.slots)
 
     async def _wake(self, name: str) -> dict:
         actor = self.actors.get(name)

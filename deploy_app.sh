@@ -85,6 +85,9 @@ fi
 export NAMESPACE REGION ARTIFACT_REGISTRY_REPO SUBSTRATE_HOTEL_IMAGE
 export PROJECT_NAME="${PROJECT_ID}"
 export GOOGLE_GENAI_USE_VERTEXAI="${GOOGLE_GENAI_USE_VERTEXAI:-TRUE}"
+# Hotel sizing knobs (see .env.example).
+export GUEST_COUNT="${GUEST_COUNT:-12}"
+export WORKER_REPLICAS="${WORKER_REPLICAS:-3}"
 for f in "${ROOT}"/infra/*.yaml; do
   base=$(basename "$f")
   echo "    applying ${base}"

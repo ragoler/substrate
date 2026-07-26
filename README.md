@@ -31,7 +31,15 @@ cp .env.example .env      # set PROJECT_ID (and anything else you like)
    room; its RAM is now a snapshot in GCS).
 3. Message them again — "waking… (~30 s)" — and the reply remembers
    everything, with the **same `boot_id`** and often a different room.
-4. "Open the hotel" checks in all 12 guests; watch the 3 rooms churn.
+4. "Open the hotel" checks in all admitted guests; watch the rooms churn.
+
+**Sizing is flexible.** `.env` sets the starting shape (`GUEST_COUNT=12`
+guests from a 20-persona roster, `WORKER_REPLICAS=3` rooms), and the UI
+changes it live: **+ Guest** admits the next persona from the roster, and
+**+ Room / − Room** rescale the WorkerPool on the spot (the ate-controller
+resizes the worker Deployment). Scaling rooms *down* below the number of
+awake guests is itself a demo: the evicted guest is suspended to a snapshot
+and comes back, memory intact, on its next message.
 
 Gemini replies use **Vertex AI with Workload Identity** — no API key
 anywhere, nothing secret ever frozen into a snapshot. Set

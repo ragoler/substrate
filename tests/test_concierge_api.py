@@ -125,6 +125,71 @@ def test_open_and_reset(concierge_client):
     assert s["meter"]["checked_in"] == 0
 
 
+def test_add_guest_expands_capacity(concierge_client):
+    from app import personas
+
+    s = concierge_client.get("/api/state").json()
+    assert s["meter"]["capacity"] == 12          # default GUEST_COUNT
+    assert s["meter"]["roster"] == len(personas.PERSONAS)
+
+    # Guest #13 is not admitted yet...
+    thirteenth = personas.GUEST_NAMES[12]
+    assert concierge_client.post(
+        f"/api/guests/{thirteenth}/chat", json={"message": "hi"}
+    ).status_code == 404
+
+    # ...until we add them.
+    r = concierge_client.post("/api/guests/add").json()
+    assert r["added"] == thirteenth
+    assert r["capacity"] == 13
+    assert concierge_client.post(
+        f"/api/guests/{thirteenth}/chat", json={"message": "hi"}
+    ).status_code == 200
+    s = concierge_client.get("/api/state").json()
+    assert len(s["guests"]) == 13
+
+
+def test_add_guest_stops_at_roster_end(concierge_client):
+    from app import personas
+
+    for _ in range(len(personas.PERSONAS) - 12):
+        assert concierge_client.post("/api/guests/add").status_code == 200
+    assert concierge_client.post("/api/guests/add").status_code == 409
+
+
+def test_rooms_scale_up_and_down(concierge_client):
+    assert len(concierge_client.get("/api/state").json()["workers"]) == 3
+
+    r = concierge_client.post("/api/rooms", json={"count": 5}).json()
+    assert r["rooms"] == 5
+    assert len(concierge_client.get("/api/state").json()["workers"]) == 5
+
+    # Scale down past an occupied room: the guest gets suspended, not lost.
+    concierge_client.post("/api/guests/amara/chat", json={"message": "hi"})
+    concierge_client.post("/api/rooms", json={"count": 1})
+    s = concierge_client.get("/api/state").json()
+    assert len(s["workers"]) == 1
+
+    # Out-of-range requests are rejected.
+    assert concierge_client.post("/api/rooms", json={"count": 0}).status_code == 422
+    assert concierge_client.post("/api/rooms", json={"count": 99}).status_code == 422
+
+
+def test_more_rooms_allow_more_awake_guests(concierge_client):
+    """The knob works with the overcommit story: 4 awake needs 4 rooms."""
+    trio = ["marisol", "viktor", "amara"]
+    for g in trio:
+        concierge_client.post(f"/api/guests/{g}/chat", json={"message": "hi"})
+    assert concierge_client.post(
+        "/api/guests/kai/chat", json={"message": "hi"}
+    ).status_code == 409                          # 3 rooms: hotel full
+
+    concierge_client.post("/api/rooms", json={"count": 4})
+    assert concierge_client.post(
+        "/api/guests/kai/chat", json={"message": "hi"}
+    ).status_code == 200                          # 4th room fits kai
+
+
 def test_llm_proxy_endpoint(concierge_client):
     r = concierge_client.post(
         "/llm",

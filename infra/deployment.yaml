@@ -27,6 +27,12 @@ spec:
           env:
             - name: ATE_MODE
               value: "real"
+            # Hotel sizing (more guests can be admitted / rooms rescaled at
+            # runtime; these are just the starting values).
+            - name: GUEST_COUNT
+              value: "${GUEST_COUNT}"
+            - name: WORKER_REPLICAS
+              value: "${WORKER_REPLICAS}"
             # Downward API — the concierge reads its own pod to learn its
             # image digest (see app/template_manager.py).
             - name: POD_NAME

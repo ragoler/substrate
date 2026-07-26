@@ -3,10 +3,12 @@ import re
 from app import personas
 
 
-def test_twelve_unique_dns_safe_names():
+def test_roster_unique_dns_safe_names():
     names = personas.GUEST_NAMES
-    assert len(names) == 12
-    assert len(set(names)) == 12
+    # Roster must cover the default GUEST_COUNT (12) with headroom for
+    # runtime "Add guest".
+    assert len(names) >= 12
+    assert len(set(names)) == len(names)
     # Guests are addressed as <name>.hotel.actors... — must be DNS labels.
     for name in names:
         assert re.fullmatch(r"[a-z]([a-z0-9-]*[a-z0-9])?", name), name

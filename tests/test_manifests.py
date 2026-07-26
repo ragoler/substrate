@@ -16,6 +16,8 @@ FAKE_VARS = {
     "ARTIFACT_REGISTRY_REPO": "substrate-hotel",
     "SUBSTRATE_HOTEL_IMAGE": "us-central1-docker.pkg.dev/fake-project/substrate-hotel/substrate-hotel:test",
     "GOOGLE_GENAI_USE_VERTEXAI": "TRUE",
+    "GUEST_COUNT": "12",
+    "WORKER_REPLICAS": "3",
 }
 
 
@@ -70,7 +72,8 @@ def test_deployment_and_names_are_consistent():
     pools = [d for _, d in docs if d.get("kind") == "WorkerPool"]
     assert len(pools) == 1
     assert pools[0]["metadata"]["name"] == "substrate-hotel"
-    assert pools[0]["spec"]["replicas"] == 3
+    # replicas comes from ${WORKER_REPLICAS} and must render as a YAML int.
+    assert pools[0]["spec"]["replicas"] == int(FAKE_VARS["WORKER_REPLICAS"])
     assert pools[0]["spec"]["sandboxClass"] == "gvisor"
 
     gateways = [d for _, d in docs if d.get("kind") == "Gateway"]

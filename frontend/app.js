@@ -17,6 +17,8 @@ const STATUS_LABEL = {
 let currentGuest = null;      // open chat drawer
 let chatBusy = false;
 let lastBootIds = {};         // guest -> boot_id we last saw (memory proof)
+let roomCount = 0;            // last worker count seen (for +/- Room)
+let bannerTimer = null;       // transient banner display (addBanner)
 
 function esc(s) {
   const div = document.createElement("div");
@@ -74,14 +76,16 @@ function renderMeter(m) {
 async function refresh() {
   try {
     const s = await api("/api/state");
+    roomCount = s.workers.length;
     renderRooms(s.workers);
     renderGuests(s.guests);
     renderMeter(s.meter);
+    $("btn-add-guest").disabled = s.meter.capacity >= s.meter.roster;
     const banner = $("banner");
     if (s.template_error) {
       banner.textContent = `⚠ ${s.template_error}`;
       banner.classList.remove("hidden");
-    } else {
+    } else if (!bannerTimer) {
       banner.classList.add("hidden");
     }
   } catch (e) {
@@ -177,6 +181,40 @@ $("btn-open").addEventListener("click", async () => {
   $("btn-open").disabled = false;
   refresh();
 });
+$("btn-add-guest").addEventListener("click", async () => {
+  try {
+    const r = await api("/api/guests/add", { method: "POST" });
+    addBanner(`${r.emoji} ${r.added} (${r.tagline}) has been admitted — ${r.capacity}/${r.roster} on the roster`);
+  } catch (e) { alert(e.message); }
+  refresh();
+});
+$("btn-add-room").addEventListener("click", async () => {
+  try { await api("/api/rooms", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ count: roomCount + 1 }),
+  }); } catch (e) { alert(e.message); }
+  refresh();
+});
+$("btn-rm-room").addEventListener("click", async () => {
+  if (roomCount <= 1) { alert("The hotel needs at least one room."); return; }
+  try { await api("/api/rooms", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ count: roomCount - 1 }),
+  }); } catch (e) { alert(e.message); }
+  refresh();
+});
+
+function addBanner(text) {
+  const banner = $("banner");
+  banner.textContent = text;
+  banner.classList.remove("hidden");
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(() => {
+    banner.classList.add("hidden");
+    bannerTimer = null;
+  }, 5000);
+}
+
 $("btn-reset").addEventListener("click", async () => {
   if (!confirm("Reset the hotel? All conversations will be lost.")) return;
   try { await api("/api/reset", { method: "POST" }); } catch (e) { alert(e.message); }

@@ -1,6 +1,7 @@
-# The hotel's rooms: a 3-worker pool that 12 guest actors overcommit onto.
-# Suspended guests hold no room, so the pool serves 4x more persistent agents
-# than it has pods.
+# The hotel's rooms: a pool of ${WORKER_REPLICAS} workers that the guests
+# overcommit onto. Suspended guests hold no room, so the pool serves far more
+# persistent agents than it has pods. The concierge can rescale this at
+# runtime (UI "add/remove room" -> PATCH spec.replicas).
 #
 # The ate-controller reconciles this into a Deployment named
 # "<workerpool>-deployment" (substrate-hotel-deployment) — distinct from the
@@ -16,7 +17,7 @@ metadata:
   labels:
     workload: substrate-hotel
 spec:
-  replicas: 3
+  replicas: ${WORKER_REPLICAS}
   # gVisor (runsc) sandbox class — the default; atelet fetches runsc itself,
   # no node-level --enable-sandbox needed.
   sandboxClass: gvisor

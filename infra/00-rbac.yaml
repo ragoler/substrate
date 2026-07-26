@@ -27,6 +27,10 @@ rules:
   - apiGroups: ["ate.dev"]
     resources: ["actortemplates"]
     verbs: ["get", "list", "create", "delete"]
+  # "Add room" / "remove room" scales the WorkerPool at runtime.
+  - apiGroups: ["ate.dev"]
+    resources: ["workerpools"]
+    verbs: ["get", "list", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

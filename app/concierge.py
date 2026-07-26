@@ -40,6 +40,11 @@ LINGER_SECONDS = float(os.environ.get("LINGER_SECONDS", "10"))
 SWEEP_IDLE_SECONDS = float(os.environ.get("SWEEP_IDLE_SECONDS", "30"))
 SWEEP_INTERVAL_S = float(os.environ.get("SWEEP_INTERVAL_S", "5"))
 POD_NAMESPACE = os.environ.get("POD_NAMESPACE", "default")
+# How many of the roster's personas are checked-in-able at start; "Add guest"
+# admits more at runtime, up to the roster size.
+GUEST_COUNT = max(1, min(int(os.environ.get("GUEST_COUNT", "12")),
+                         len(personas.PERSONAS)))
+MAX_ROOMS = int(os.environ.get("MAX_ROOMS", "12"))
 FRONTEND_DIR = os.environ.get(
     "FRONTEND_DIR",
     os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -61,6 +66,19 @@ activity: dict[str, float] = {}
 waking: dict[str, bool] = {}
 template_name: str | None = None
 template_error: str | None = None
+# Guests currently admitted (a prefix of the roster). Grows via /api/guests/add,
+# and auto-extends when existing actors are discovered beyond it (e.g. after a
+# concierge restart) — Substrate, not this counter, is the source of truth.
+active_count: int = GUEST_COUNT
+
+
+def _active_personas(actors: dict | None = None) -> list[personas.Persona]:
+    global active_count
+    if actors:
+        for i, p in enumerate(personas.PERSONAS):
+            if p.name in actors and i >= active_count:
+                active_count = i + 1
+    return personas.PERSONAS[:active_count]
 
 
 class ChatIn(BaseModel):
@@ -69,6 +87,10 @@ class ChatIn(BaseModel):
 
 class YieldIn(BaseModel):
     guest: str
+
+
+class RoomsIn(BaseModel):
+    count: int
 
 
 class LlmIn(BaseModel):
@@ -81,6 +103,11 @@ def _valid_guest(name: str) -> str:
     name = name.strip().lower()
     if name not in personas.BY_NAME:
         raise HTTPException(status_code=404, detail=f"unknown guest: {name}")
+    if personas.GUEST_NAMES.index(name) >= active_count:
+        raise HTTPException(
+            status_code=404,
+            detail=f"{name} has not been admitted yet — use 'Add guest'",
+        )
     return name
 
 
@@ -112,7 +139,7 @@ async def get_state():
 
     guests = []
     n_awake = n_suspended = 0
-    for p in personas.PERSONAS:
+    for p in _active_personas(actors):
         actor = actors.get(p.name)
         if actor is None:
             status = "vacant"
@@ -139,7 +166,8 @@ async def get_state():
         "workers": workers,
         "meter": {
             "checked_in": checked_in,
-            "capacity": len(personas.PERSONAS),
+            "capacity": active_count,
+            "roster": len(personas.PERSONAS),
             "workers": n_workers,
             "awake": n_awake,
             "suspended": n_suspended,
@@ -190,8 +218,9 @@ async def history(name: str):
 # --- Hotel management ---------------------------------------------------------
 @app.post("/api/open")
 async def open_hotel():
-    """Check in every guest (bounded concurrency; idle ones get swept to 💤)."""
+    """Check in every admitted guest (bounded; idle ones get swept to 💤)."""
     template = _template()
+    names = [p.name for p in _active_personas()]
 
     async def check_in_all():
         sem = asyncio.Semaphore(3)
@@ -207,10 +236,42 @@ async def open_hotel():
                 except AteError as e:
                     logger.warning("check-in failed for %s: %s", guest, e.detail)
 
-        await asyncio.gather(*(one(g) for g in personas.GUEST_NAMES))
+        await asyncio.gather(*(one(g) for g in names))
 
     asyncio.create_task(check_in_all())
-    return {"action": "open", "guests": len(personas.GUEST_NAMES)}
+    return {"action": "open", "guests": len(names)}
+
+
+@app.post("/api/guests/add")
+async def add_guest():
+    """Admit the next persona from the roster (they check in on first chat)."""
+    global active_count
+    if active_count >= len(personas.PERSONAS):
+        raise HTTPException(
+            status_code=409,
+            detail=f"the roster is full ({len(personas.PERSONAS)} personas)",
+        )
+    active_count += 1
+    p = personas.PERSONAS[active_count - 1]
+    return {
+        "added": p.name, "emoji": p.emoji, "tagline": p.tagline,
+        "capacity": active_count, "roster": len(personas.PERSONAS),
+    }
+
+
+@app.post("/api/rooms")
+async def set_rooms(body: RoomsIn):
+    """Scale the WorkerPool (the hotel's rooms) up or down at runtime."""
+    count = body.count
+    if not 1 <= count <= MAX_ROOMS:
+        raise HTTPException(
+            status_code=422, detail=f"rooms must be between 1 and {MAX_ROOMS}"
+        )
+    try:
+        actual = await ate.set_room_count(count)
+    except AteError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
+    return {"rooms": actual}
 
 
 @app.post("/api/reset")
