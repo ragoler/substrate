@@ -49,7 +49,7 @@ sleeping guest, RAM survives):
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-# (behind a mirror that lacks these? add: -i https://pypi.org/simple)
+# (behind a private pip mirror you aren't authenticated to? add: -i https://pypi.org/simple)
 
 pytest tests/                                   # the whole suite is offline
 

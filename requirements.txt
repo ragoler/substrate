@@ -4,7 +4,8 @@
 #
 #   pip install -r requirements.txt
 #
-# If your pip is configured against a mirror that lacks these packages, add:
+# If your pip is configured against a private mirror you aren't authenticated
+# to (symptom: "no versions found" for everything), bypass it with:
 #   pip install -i https://pypi.org/simple -r requirements.txt
 fastapi>=0.111
 uvicorn>=0.29
