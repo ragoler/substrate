@@ -47,7 +47,9 @@ the same observable semantics (3 slots, suspend frees a slot, chat wakes a
 sleeping guest, RAM survives):
 
 ```bash
-pip install fastapi uvicorn httpx pytest pyyaml
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+# (behind a mirror that lacks these? add: -i https://pypi.org/simple)
 
 pytest tests/                                   # the whole suite is offline
 
