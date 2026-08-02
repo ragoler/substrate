@@ -1,7 +1,9 @@
 # Agent Hotel
 
 *A demo that teaches [Agent Substrate](https://github.com/agent-substrate/substrate) by
-letting you chat with 12 AI agents who live in a hotel with only 3 rooms.*
+letting you chat with 12 AI agents who live in a hotel with only 3 rooms.
+(Those are the starting numbers — the roster holds 20 personas, and both the
+admitted-guest count and the room count are adjustable live from the UI.)*
 
 ---
 
@@ -42,7 +44,7 @@ What you do:
    process — is checkpointed to cloud storage, and the room frees up for someone else.
    Her card flips to 💤.
 3. **Wake her just by talking to her.** Send another message: "actually, make it Osaka."
-   You'll see a "waking Amara… (restoring checkpoint, ~30 s)" state, and then she answers
+   You'll see a "waking Amara… (restoring checkpoint, ~10–30 s)" state, and then she answers
    **remembering the entire Kyoto conversation** — even though her process was frozen,
    shipped to storage, and restored, usually into a *different room* than before.
 4. **Fill the hotel.** Hit "Open the hotel" to check in all 12 guests and chat with
@@ -110,6 +112,18 @@ A few deliberate design choices, in plain terms:
 
 - **The guest holds its memory in RAM on purpose.** No database, no session store —
   demonstrating that Substrate's checkpointing *is* the persistence layer.
+- **A guest learns its identity from an explicit `X-Actor-Name` header** the concierge
+  sends with every request (the router's Envoy rewrites the Host header to the upstream
+  pod IP, so the classic name-from-Host trick is unreliable). The same header powers a
+  **misdirect guard**: during a suspend/resume shuffle the router can briefly proxy a
+  request to a room whose previous occupant is still bound — the guest answers
+  `421 Misdirected Request` instead of impersonating someone else, and the concierge
+  retries until the routing settles.
+- **The concierge retries transient data-path failures** (cold image pulls on a room's
+  node, full-hotel resume contention, misdirects) for up to ~30 s — long enough for an
+  idle guest to yield a room — before surfacing an error. `deploy_app.sh` additionally
+  warms every room after a rebuild (one throwaway chat per room pre-pulls the new image
+  onto each node) and then resets, so first real interactions are fast.
 - **No secrets in snapshots.** The agents use Vertex AI with Workload Identity (the same
   pattern as the hub's `agent-sandbox` feature), so credentials are re-fetched after
   every resume instead of being frozen into a checkpoint. If Vertex isn't available, the
@@ -117,27 +131,23 @@ A few deliberate design choices, in plain terms:
 - **One container image plays both roles** (concierge and guest), and the concierge
   registers the guest template with Substrate at startup using its own image digest —
   Substrate requires digest-pinned images, and this keeps rebuilds automatic.
-- **Waking takes ~30 seconds** (checkpoint restore from GCS). The UI is honest about it —
-  a "waking…" state, not a spinner — and the load balancer timeout is raised so the
-  request survives the wait.
+- **Waking takes ~10–30 seconds** (checkpoint restore from GCS; longer the first time a
+  node has to pull the guest image). The UI is honest about it — a "waking…" state, not
+  a spinner — and the load balancer timeout is raised so the request survives the wait.
 
 ## How it runs
 
-Two modes, same code:
+Today the demo runs **standalone**: three scripts — `setup_infra.sh` (create a GKE
+cluster and install the Substrate control plane), `deploy_app.sh` (build and deploy the
+hotel, then warm each room and reset), `verify_setup.sh` (an automated end-to-end
+proof: chat → sleep → wake → memory intact). Configuration comes from a `.env` file;
+`ATE_MODE=fake` runs the whole hotel in-memory for local dev and tests.
 
-- **Inside the GKE Feature Showcase Hub** (`gke_all`): this repo mounts as a git
-  submodule at `features/substrate-hotel/`. The hub deploys it into its own namespace
-  from a dashboard card; the playroom UI appears at `/substrate-hotel/`. The hub's
-  offline mock mode shows a canned hotel with scripted replies, so the UI works even
-  with no cluster at all.
-- **Standalone**: three scripts — `setup_infra.sh` (create a GKE cluster and install the
-  Substrate control plane), `deploy_app.sh` (build and deploy the hotel),
-  `verify_setup.sh` (an automated end-to-end proof: chat → sleep → wake → memory
-  intact). Configuration comes from a `.env` file.
-
-Both modes share the same cluster prerequisite: the Agent Substrate control plane
-(pinned to the same upstream commit the hub's existing `substrate-overcommit` feature
-uses), installed once per cluster by an idempotent script.
+*(Planned, not yet implemented: mounting this repo into the GKE Feature Showcase Hub
+(`gke_all`) as a `features/substrate-hotel/` submodule with a dashboard card and mock
+mode. The cluster prerequisite is already shared: the installer deploys the same plane,
+at the same pinned upstream commit, as the hub's existing `substrate-overcommit`
+feature.)*
 
 ## Repository tour
 
@@ -145,24 +155,26 @@ uses), installed once per cluster by an idempotent script.
 | --- | --- |
 | `app/agent/` | The guest: a tiny HTTP chat server + Gemini client |
 | `app/concierge.py` | The concierge API and UI server |
-| `app/ate_client.py` | The gRPC client that talks to Substrate's control plane |
-| `app/personas.py` | The 12 guests — names, personalities, system prompts |
+| `app/ate_client.py` | The gRPC/router client for Substrate's control + data planes, plus the in-memory fake |
+| `app/template_manager.py` | Registers the digest-pinned ActorTemplate from the pod's own imageID |
+| `app/personas.py` | The guest roster — 20 personas (names, personalities, system prompts); 12 admitted by default |
 | `frontend/` | The hotel floor-plan UI |
-| `infra/` | Kubernetes manifests the hub (or `deploy_app.sh`) applies: concierge, WorkerPool, gateway |
+| `infra/` | Kubernetes manifests `deploy_app.sh` applies: concierge, WorkerPool, gateway |
 | `cluster/` | One-per-cluster prerequisites: the Substrate control-plane installer |
-| `hub_router.py`, `feature.yaml` | The hub integration: feature descriptor + mock mode |
 | `tests/` | Offline test suite (the whole hotel runs against a fake Substrate for tests) |
 
-## Build plan (summary)
+## Build plan (status)
 
-1. **Offline first** — the entire hotel (concierge, guests, UI) runs locally against a
+1. **Offline first** ✅ — the entire hotel (concierge, guests, UI) runs locally against a
    fake in-memory Substrate; full test suite, no cluster needed.
-2. **Hub mock mode** — the card and playroom render in the hub with canned data.
-3. **Real Substrate plane** — verify the risky bits in order: golden snapshots, Vertex
-   calls from inside the sandbox, the sleep/wake cycle with a stable `boot_id`.
-4. **Standalone path** — fresh cluster from scratch via the three scripts.
-5. **Hub live + polish** — deploy from the dashboard, animations, checklist.
+2. **Real Substrate plane** ✅ — golden snapshots, Vertex calls from inside the sandbox,
+   and the sleep/wake cycle with a stable `boot_id` all verified end to end
+   (`verify_setup.sh` automates the proof).
+3. **Standalone path** ✅ — fresh cluster from scratch via the three scripts.
+4. **Hub integration (mock mode, dashboard card, live deploy)** — planned, not started.
 
-The main open risk: whether guests can reach Vertex AI from inside their gVisor sandbox
-(upstream's Claude Code demo suggests yes). If not, the concierge proxies the LLM call —
-one environment variable, no redesign.
+The original open risk is resolved: guests DO reach Vertex AI from inside their gVisor
+sandbox (egress rides the worker pod's network namespace, so the call carries the worker
+pod's Workload Identity — grant that principal `roles/aiplatform.user`, or use the
+`WI_IMPERSONATE_GSA` knob in `.env` on projects whose IAM policy is centrally managed).
+The concierge `/llm` proxy fallback also exists (`LLM_MODE=proxy`).

@@ -36,3 +36,49 @@ def test_name_comes_from_host_header(agent_client):
         headers={"Host": "viktor.hotel.actors.resources.substrate.ate.dev"},
     ).json()
     assert r["guest"] == "viktor"
+
+
+def test_actor_name_header_wins_over_host(agent_client):
+    # The router's Envoy rewrites Host to the upstream pod IP; the explicit
+    # X-Actor-Name header the concierge sends is the reliable identity.
+    r = agent_client.post(
+        "/chat", json={"message": "hi"},
+        headers={"Host": "10.80.3.4:80", "X-Actor-Name": "lumi"},
+    ).json()
+    assert r["guest"] == "lumi"
+
+
+def test_ip_shaped_host_never_becomes_a_name(agent_client):
+    # Without the header, an IP-shaped Host must NOT name the guest "10" —
+    # the regression that once had every guest introduce itself as "🧳 10".
+    r = agent_client.post(
+        "/chat", json={"message": "hi"}, headers={"Host": "10.80.3.4:80"}
+    ).json()
+    assert r["guest"] == "guest"          # identity stays unclaimed
+
+    # The next properly-addressed request claims the real name.
+    r = agent_client.post(
+        "/chat", json={"message": "hi"},
+        headers={"Host": "10.80.3.4:80", "X-Actor-Name": "amara"},
+    ).json()
+    assert r["guest"] == "amara"
+
+
+def test_misdirected_request_is_421(agent_client):
+    # Once a guest knows who it is, a request addressed to someone else is
+    # refused — the suspend/resume shuffle can briefly route to the wrong
+    # room, and answering would cross-pollute two conversations.
+    agent_client.post(
+        "/chat", json={"message": "hi"},
+        headers={"Host": "10.0.0.1:80", "X-Actor-Name": "amara"},
+    )
+    resp = agent_client.post(
+        "/chat", json={"message": "hi"},
+        headers={"Host": "10.0.0.1:80", "X-Actor-Name": "viktor"},
+    )
+    assert resp.status_code == 421
+    assert "amara" in resp.json()["detail"]
+    # History is equally guarded (it leaks the whole conversation otherwise).
+    assert agent_client.get(
+        "/history", headers={"X-Actor-Name": "viktor"}
+    ).status_code == 421

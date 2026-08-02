@@ -163,6 +163,9 @@ kubectl get secret session-id-ca-pool -n ate-system >/dev/null 2>&1 \
        --ca-id="1" --name="session-id-ca-pool" --secret-namespace=ate-system
 
 # --- 6. api-server env vars -----------------------------------------------------
+# ATE_API_K8SJWT_ISSUER must equal the cluster's OIDC issuer exactly
+# (kubectl get --raw /.well-known/openid-configuration): the location segment
+# is the ZONE for zonal clusters, the region for regional ones — CLUSTER_LOCATION.
 note "[6/10] ensuring ate-api-server-envvars ConfigMap"
 if ! kubectl get configmap ate-api-server-envvars -n ate-system >/dev/null 2>&1; then
   kubectl create configmap ate-api-server-envvars -n ate-system \
@@ -170,7 +173,7 @@ if ! kubectl get configmap ate-api-server-envvars -n ate-system >/dev/null 2>&1;
     --from-literal=ATE_API_REDIS_USE_IAM_AUTH="false" \
     --from-literal=ATE_API_REDIS_TLS_SERVER_NAME="valkey-cluster.ate-system.svc" \
     --from-literal=ATE_API_REDIS_CLIENT_CERT="/run/servicedns.podcert.ate.dev/credential-bundle.pem" \
-    --from-literal=ATE_API_K8SJWT_ISSUER="https://container.googleapis.com/v1/projects/${PROJECT_NAME}/locations/${REGION}/clusters/${CLUSTER}"
+    --from-literal=ATE_API_K8SJWT_ISSUER="https://container.googleapis.com/v1/projects/${PROJECT_NAME}/locations/${CLUSTER_LOCATION}/clusters/${CLUSTER}"
 fi
 
 # --- 7. snapshot bucket ----------------------------------------------------------
@@ -206,6 +209,14 @@ if [ -n "${WORKLOAD_POOL}" ]; then
     "gs://${PROJECT_NAME}-substrate-snapshots" \
     --member "principal://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${WORKLOAD_POOL}/subject/ns/ate-system/sa/atelet" \
     --role roles/storage.objectAdmin >/dev/null
+  # The atelet also PULLS the guest image itself (it assembles the gVisor OCI
+  # bundle in userspace, not via kubelet), so on a Workload Identity cluster
+  # its principal needs Artifact Registry read or every restore fails with
+  # "artifactregistry.repositories.downloadArtifacts denied".
+  gcloud artifacts repositories add-iam-policy-binding "${ARTIFACT_REGISTRY_REPO}" \
+    --location "${REGION}" --project "${PROJECT_NAME}" \
+    --member "principal://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${WORKLOAD_POOL}/subject/ns/ate-system/sa/atelet" \
+    --role roles/artifactregistry.reader >/dev/null
 fi
 
 # --- 7b. Vertex AI access (keyless — the whole point) ---------------------------
@@ -237,6 +248,35 @@ kubectl delete job valkey-cluster-init -n ate-system --ignore-not-found
 kubectl kustomize manifests/ate-install/static-certs --load-restrictor LoadRestrictionsNone \
   | ko resolve -f - \
   | kubectl apply -f -
+
+# --- 8b. optional: Workload Identity impersonation (org-policy-swept projects) --
+# Some projects have their project IAM policy rewritten by an org process every
+# few minutes, silently wiping the WI-principal grants from steps 7/7b. Setting
+# WI_IMPERSONATE_GSA=<gsa-email> makes the hotel's workloads run as that GSA
+# instead: the workloadIdentityUser bindings live on the SA RESOURCE, not the
+# project policy, so they survive the sweep. The GSA must already hold Artifact
+# Registry read, snapshot-bucket write, and aiplatform.user (the default
+# compute SA typically does). Wired identities:
+#   ate-system/atelet             — pulls guest images (userspace OCI bundle
+#                                   assembly) + uploads suspend snapshots
+#   APP_NAMESPACE/default         — worker pods; guest egress (Vertex calls)
+#                                   carries this identity
+#   APP_NAMESPACE/substrate-hotel-concierge — /llm proxy fallback (annotated in
+#                                   deploy_app.sh once the KSA exists)
+if [ -n "${WI_IMPERSONATE_GSA:-}" ]; then
+  note "[8b/10] wiring WI impersonation of ${WI_IMPERSONATE_GSA}"
+  for KSA_REF in "ate-system/atelet" "${APP_NAMESPACE}/default" \
+                 "${APP_NAMESPACE}/substrate-hotel-concierge"; do
+    gcloud iam service-accounts add-iam-policy-binding "${WI_IMPERSONATE_GSA}" \
+      --project "${PROJECT_NAME}" --role roles/iam.workloadIdentityUser \
+      --member "serviceAccount:${PROJECT_NAME}.svc.id.goog[${KSA_REF}]" >/dev/null
+  done
+  kubectl -n ate-system annotate serviceaccount atelet \
+    "iam.gke.io/gcp-service-account=${WI_IMPERSONATE_GSA}" --overwrite
+  kubectl -n "${APP_NAMESPACE}" annotate serviceaccount default \
+    "iam.gke.io/gcp-service-account=${WI_IMPERSONATE_GSA}" --overwrite
+  kubectl -n ate-system rollout restart daemonset/atelet
+fi
 
 # --- 9. rollout waits ------------------------------------------------------------
 note "[9/10] waiting for the plane to come up"

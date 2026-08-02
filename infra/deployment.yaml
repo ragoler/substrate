@@ -18,10 +18,18 @@ spec:
         app: substrate-hotel-concierge
     spec:
       serviceAccountName: substrate-hotel-concierge
+      # The GCLB data plane lags ~1-2 min detaching a killed endpoint from the
+      # NEG; without this drain the site serves "no healthy upstream" after
+      # every rollout of this single-replica deployment.
+      terminationGracePeriodSeconds: 75
       containers:
         - name: concierge
           image: ${SUBSTRATE_HOTEL_IMAGE}
           imagePullPolicy: Always
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "60"]
           ports:
             - containerPort: 8000
           env:

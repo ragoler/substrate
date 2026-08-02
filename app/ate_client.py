@@ -299,14 +299,39 @@ class RealAteClient:
         import httpx
 
         host = f"{name}{ACTOR_HOST_SUFFIX}"
-        try:
-            async with httpx.AsyncClient(timeout=CHAT_TIMEOUT_S) as http:
-                resp = await http.request(
-                    method, ROUTER_URL.rstrip("/") + path,
-                    headers={"Host": host}, json=json_body,
-                )
-        except httpx.HTTPError as e:
-            raise AteError(502, f"router request failed: {e}")
+        # Retriable statuses, all pre-proxy (the guest never saw the message,
+        # so a retry cannot duplicate a chat turn):
+        #   421 — the guest's misdirect guard: the room still hosts its
+        #         previous occupant (suspend/resume shuffle race);
+        #   500/503 — resume failed or timed out in the router's ext_proc,
+        #         typically a cold image pull on that room's node; the pull
+        #         keeps going, so a later attempt succeeds from cache.
+        # 504 means the guest MAY have processed the message after the router
+        # gave up — only idempotent GETs are safe to retry there.
+        # Six attempts spanning ~30s of backoff: enough to ride out a full
+        # linger cycle when every room is busy — an occupant yields after
+        # LINGER_SECONDS idle, freeing a room for this guest's resume.
+        for attempt in range(6):
+            try:
+                async with httpx.AsyncClient(timeout=CHAT_TIMEOUT_S) as http:
+                    # X-Actor-Name travels alongside Host because the router's
+                    # Envoy rewrites Host to the upstream pod IP — the guest
+                    # cannot learn its name from Host alone.
+                    resp = await http.request(
+                        method, ROUTER_URL.rstrip("/") + path,
+                        headers={"Host": host, "X-Actor-Name": name},
+                        json=json_body,
+                    )
+            except httpx.HTTPError as e:
+                raise AteError(502, f"router request failed: {e}")
+            retriable = resp.status_code in (421, 500, 503) or (
+                resp.status_code == 504 and method == "GET"
+            )
+            if resp.status_code == 200 or not retriable:
+                break
+            logger.warning("router %d for %s (attempt %d); retrying",
+                           resp.status_code, name, attempt + 1)
+            await asyncio.sleep(2.0 * (attempt + 1))
         if resp.status_code != 200:
             raise AteError(502, f"router returned {resp.status_code} for {name}")
         try:
@@ -374,6 +399,13 @@ class FakeAteClient:
         return True
 
     async def delete_actor(self, name: str) -> None:
+        # Mirror the real plane: a RUNNING actor is refused — callers must
+        # suspend first (see the concierge's _delete_actor_hard).
+        actor = self.actors.get(name)
+        if actor is not None and actor["status"] == "awake":
+            raise AteError(
+                409, f"Actor {name} is not suspended (status: STATUS_RUNNING)"
+            )
         self.actors.pop(name, None)
 
     async def list_actors(self) -> dict[str, dict]:

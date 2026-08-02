@@ -123,6 +123,7 @@ CLUSTER_LOCATION="${ZONE}" \
 REGION="${REGION}" \
 APP_NAMESPACE="${NAMESPACE:-default}" \
 ARTIFACT_REGISTRY_REPO="${ARTIFACT_REGISTRY_REPO}" \
+WI_IMPERSONATE_GSA="${WI_IMPERSONATE_GSA:-}" \
   bash "${ROOT}/cluster/install-substrate-hotel-prereq.sh"
 
 echo "=== Setup complete. Next: ./deploy_app.sh ==="

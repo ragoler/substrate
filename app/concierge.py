@@ -274,15 +274,37 @@ async def set_rooms(body: RoomsIn):
     return {"rooms": actual}
 
 
+async def _delete_actor_hard(guest: str) -> str | None:
+    """Delete an actor whatever state it is in; returns an error or None.
+
+    The plane only deletes settled actors — a RUNNING guest must be suspended
+    first, and a SUSPENDING/RESUMING one needs a moment to settle — so nudge
+    with suspend and retry briefly instead of surfacing a transient 409.
+    """
+    last = None
+    for _ in range(10):
+        try:
+            await ate.delete_actor(guest)
+            return None
+        except AteError as e:
+            last = e
+        try:
+            if await ate.suspend_actor(guest):
+                await ate.delete_actor(guest)
+                return None
+        except AteError as e:
+            last = e
+        await asyncio.sleep(1.5)
+    return f"{guest}: {last.detail}" if last else None
+
+
 @app.post("/api/reset")
 async def reset_hotel():
     """Delete every guest actor; conversations are gone for good."""
-    errors = []
-    for guest in personas.GUEST_NAMES:
-        try:
-            await ate.delete_actor(guest)
-        except AteError as e:
-            errors.append(f"{guest}: {e.detail}")
+    results = await asyncio.gather(
+        *(_delete_actor_hard(g) for g in personas.GUEST_NAMES)
+    )
+    errors = [r for r in results if r]
     activity.clear()
     waking.clear()
     return {"action": "reset", "errors": errors}

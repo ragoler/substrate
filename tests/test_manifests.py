@@ -133,6 +133,49 @@ def test_workerpool_node_selector_renders_both_ways():
     assert cc["spec"]["nodePoolAutoCreation"]["enabled"] is True
 
 
+def test_concierge_drains_on_termination():
+    """Hitless rollouts: the GCLB data plane lags ~1-2 min detaching a killed
+    endpoint, so the pod must keep serving (preStop sleep) while it drains —
+    without it every rollout serves 'no healthy upstream'."""
+    for fname, doc in rendered_docs():
+        if doc.get("kind") != "Deployment":
+            continue
+        spec = doc["spec"]["template"]["spec"]
+        container = spec["containers"][0]
+        pre_stop = container["lifecycle"]["preStop"]["exec"]["command"]
+        assert pre_stop[0] == "sleep"
+        drain = int(pre_stop[1])
+        assert drain >= 30
+        # Grace must outlast the drain or the kubelet kills the pod mid-sleep.
+        assert spec["terminationGracePeriodSeconds"] > drain
+
+
+def test_atelet_tolerates_compute_class_nodes():
+    """The static-certs overlay must schedule atelet onto NAP nodes: rooms on
+    a Custom-Compute-Class node are unusable without a local atelet (every
+    ResumeActor fails with 'found 0 atelet pods on node')."""
+    kust = yaml.safe_load(
+        open(os.path.join(ROOT, "cluster", "static-certs", "kustomization.yaml"))
+    )
+    for patch in kust["patches"]:
+        target = patch.get("target", {})
+        if target.get("kind") != "DaemonSet" or target.get("name") != "atelet":
+            continue
+        ops = yaml.safe_load(patch["patch"])
+        tolerations = [
+            t for op in ops if "tolerations" in op.get("path", "")
+            for t in op["value"]
+        ]
+        assert any(
+            t["key"] == "cloud.google.com/compute-class"
+            and t["operator"] == "Exists"
+            for t in tolerations
+        )
+        break
+    else:
+        raise AssertionError("no atelet toleration patch in static-certs overlay")
+
+
 def test_projected_token_audience():
     for _, doc in rendered_docs():
         if doc.get("kind") != "Deployment":

@@ -88,8 +88,12 @@ def build_template_body(name: str, namespace: str, image_ref: str) -> dict:
                     "image": image_ref,
                     # The atenet-router proxies to the actor on port 80 (fixed
                     # upstream), so the guest listens there.
+                    # --app-dir pins the import root: the gVisor OCI bundle
+                    # does not inherit the image's WORKDIR, so a bare
+                    # "app.agent.server:app" fails with ModuleNotFoundError.
                     "command": [
-                        "uvicorn", "app.agent.server:app",
+                        "uvicorn", "--app-dir", "/srv",
+                        "app.agent.server:app",
                         "--host", "0.0.0.0", "--port", "80",
                     ],
                     "readyz": {"httpGet": {"path": "/readyz", "port": 80}},

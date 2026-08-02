@@ -101,6 +101,17 @@ for f in "${ROOT}"/infra/*.yaml; do
   render "$f" | kubectl apply -n "${NAMESPACE}" -f -
 done
 
+# Org-policy-swept projects: the KSAs impersonate WI_IMPERSONATE_GSA (see
+# .env.example / installer step 8b). The SA-level bindings are made by the
+# installer; the concierge KSA only exists after the rbac manifest above.
+if [ -n "${WI_IMPERSONATE_GSA:-}" ]; then
+  echo "=== Annotating KSAs to impersonate ${WI_IMPERSONATE_GSA} ==="
+  kubectl -n "${NAMESPACE}" annotate serviceaccount substrate-hotel-concierge \
+    "iam.gke.io/gcp-service-account=${WI_IMPERSONATE_GSA}" --overwrite
+  kubectl -n "${NAMESPACE}" annotate serviceaccount default \
+    "iam.gke.io/gcp-service-account=${WI_IMPERSONATE_GSA}" --overwrite
+fi
+
 echo "=== Rolling out the concierge ==="
 # Force a fresh pull of the rebuilt image (stable per-cluster tag + Always
 # policy). A new image digest makes the concierge register a fresh
@@ -131,5 +142,45 @@ for i in {1..30}; do
   sleep 10
 done
 [ -z "${GATEWAY_IP:-}" ] && echo "Gateway IP not ready yet; check: kubectl -n ${NAMESPACE} get gateway ${GATEWAY_NAME}"
+
+# --- Warm-up: pull the new guest image onto every room's node -------------------
+# Each rebuild changes the image digest, so the FIRST actor start on a node
+# re-pulls the image — slower than the router's patience, surfacing as a
+# one-off 500/504 to whoever chats first. Chat once per room here (in
+# parallel, so each lands on a different room), then reset: the pull cache
+# survives the reset, the demo starts clean AND warm.
+if [ -n "${GATEWAY_IP:-}" ]; then
+  echo "=== Warming ${WORKER_REPLICAS} room(s) (first pull of the new image per node) ==="
+  json_get() { python3 -c "import json,sys;d=json.load(sys.stdin);print($1)" 2>/dev/null; }
+  # `|| true` everywhere: this script runs under set -e, and the LB briefly
+  # drops connections while it swaps to the restarted concierge pod.
+  for i in {1..30}; do
+    TPL=$(curl -s --max-time 10 "http://${GATEWAY_IP}/api/state" | json_get "d.get('template') or ''" || true)
+    [ -n "${TPL}" ] && break
+    sleep 10
+  done
+  if [ -z "${TPL:-}" ]; then
+    echo "    ActorTemplate not registered yet — skipping warm-up (first chats may be slow)."
+  else
+    WARM_GUESTS=$(curl -s --max-time 10 "http://${GATEWAY_IP}/api/state" \
+      | json_get "' '.join(g['name'] for g in d['guests'][:${WORKER_REPLICAS}])" || true)
+    warm_one() {
+      for a in 1 2 3 4; do
+        curl -sf --max-time 150 -X POST "http://${GATEWAY_IP}/api/guests/$1/chat" \
+          -H 'Content-Type: application/json' \
+          -d '{"message":"(warm-up ping — just say hi briefly)"}' >/dev/null \
+          && { echo "    room warmed via $1"; return 0; }
+        sleep 5
+      done
+      echo "    warm-up via $1 did not complete (non-fatal)"
+    }
+    WARM_PIDS=()
+    for g in ${WARM_GUESTS}; do warm_one "${g}" & WARM_PIDS+=($!); done
+    wait "${WARM_PIDS[@]}" 2>/dev/null || true
+    curl -s --max-time 30 -X POST "http://${GATEWAY_IP}/api/reset" \
+      -H 'Content-Type: application/json' -d '{}' >/dev/null || true
+    echo "    rooms warm; hotel reset to a clean slate"
+  fi
+fi
 
 echo "=== Done. Run ./verify_setup.sh to smoke-test the suspend/resume proof. ==="

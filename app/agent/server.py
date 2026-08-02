@@ -13,8 +13,10 @@ Identity notes:
     the first real request — after the actor has been created and diverged
     from the golden snapshot — making it unique per actor AND stable across
     every later suspend/resume. Its stability is the proof RAM survived.
-  - The guest learns its own name from the request Host header
-    (`<name>.hotel.actors...`), the same trick upstream's agent-secret uses.
+  - The guest learns its own name from the X-Actor-Name header the concierge
+    sends (with the Host header `<name>.hotel.actors...` as fallback — the
+    router's Envoy rewrites Host to the upstream pod IP, so Host alone is
+    unreliable).
 
 Zero-idle: LINGER_SECONDS after the last reply, the agent asks the concierge
 to tuck it in (POST /internal/yield). The agent cannot call SuspendActor
@@ -29,7 +31,7 @@ import os
 import time
 import uuid
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -60,10 +62,27 @@ state: dict = {
 def _ensure_identity(request: Request) -> None:
     if state["boot_id"] is None:
         state["boot_id"] = uuid.uuid4().hex[:12]
-    host = request.headers.get("host", "")
-    name = host.split(".", 1)[0].strip().lower()
+    # Prefer the explicit header: the router's Envoy rewrites Host to the
+    # upstream pod IP, so the Host trick alone would name every guest after
+    # the first octet of its pod's IP.
+    name = request.headers.get("x-actor-name", "").strip().lower()
+    if not name:
+        host = request.headers.get("host", "")
+        name = host.split(".", 1)[0].strip().lower()
+        if name and not name.isidentifier():
+            name = ""  # an IP-shaped Host label is not a guest name
     if name and state["guest"] is None:
         state["guest"] = name
+    # Misdirect guard: during a suspend/resume shuffle the router can briefly
+    # proxy a request to a room whose previous occupant is still bound. A 421
+    # tells the concierge to retry rather than let guests answer for each
+    # other (cross-talk shows the wrong persona AND pollutes checkpointed
+    # history).
+    if name and state["guest"] and name != state["guest"]:
+        raise HTTPException(
+            status_code=421,
+            detail=f"this is {state['guest']}, not {name}",
+        )
 
 
 class ChatIn(BaseModel):

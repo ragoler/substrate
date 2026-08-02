@@ -11,12 +11,26 @@ shared plane at the same pinned upstream commit):
 - `ate-controller` + `atelet` (reconcile + node agent)
 - static openssl-minted TLS certs via the `static-certs/` kustomize overlay —
   a stand-in for the alpha PodCertificate/ClusterTrustBundle APIs, so the
-  plane runs on a plain GKE Standard cluster
+  plane runs on a plain GKE Standard cluster. The overlay also adds a
+  toleration so the `atelet` DaemonSet runs on Custom-Compute-Class (NAP)
+  nodes — suspend/resume calls the atelet on the worker's node, so every
+  node a room can land on needs one
 - the `gs://<project>-substrate-snapshots` bucket + IAM for snapshot upload
 - **Vertex AI IAM** (`roles/aiplatform.user`) for the node SA and the app
   namespace's Workload Identity principals — this is what makes the guests'
-  keyless Gemini calls work
+  keyless Gemini calls work. On projects where an org process periodically
+  rewrites the project IAM policy (wiping these grants), set
+  `WI_IMPERSONATE_GSA` instead: step 8b makes the hotel's KSAs impersonate
+  that GSA via SA-resource-level bindings, which the sweep doesn't touch
 - the `ateom-gvisor` worker image, built from upstream source with `ko`
+
+Note on JWT auth: the api-server validates client tokens against the
+cluster's OIDC issuer, whose location segment is the **zone** for zonal
+clusters (`CLUSTER_LOCATION`), not the region. The issuer lands in the
+`ate-api-server-envvars` ConfigMap, which is created only if absent — if it
+is ever wrong on an existing cluster (every control-plane call fails with
+`UNAUTHENTICATED: unexpected issuer`), patch the ConfigMap and restart
+`ate-api-server-deployment`; re-running the installer will NOT fix it.
 
 ## Toolchain
 

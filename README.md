@@ -29,7 +29,7 @@ cp .env.example .env      # set PROJECT_ID (and anything else you like)
 1. Click a guest, say hello, tell them something to remember.
 2. Watch the card flip to 💤 about 10 s after the reply (the guest yielded its
    room; its RAM is now a snapshot in GCS).
-3. Message them again — "waking… (~30 s)" — and the reply remembers
+3. Message them again — "waking… (~10–30 s)" — and the reply remembers
    everything, with the **same `boot_id`** and often a different room.
 4. "Open the hotel" checks in all admitted guests; watch the rooms churn.
 
@@ -75,6 +75,15 @@ ATE_MODE=fake LLM_MODE=canned uvicorn app.concierge:app --port 8000
 # open http://localhost:8000/
 ```
 
+If local `pip` can't reach any index at all, run the suite inside the app
+image instead (its build already installed the runtime deps):
+
+```bash
+docker build --platform linux/amd64 -t hotel-test -f app/Dockerfile .
+docker run --rm -v "$PWD":/work -w /work hotel-test \
+  sh -c 'pip install -q pytest pyyaml && python -m pytest -q tests/'
+```
+
 ## Layout
 
 | Path | What it is |
@@ -83,7 +92,7 @@ ATE_MODE=fake LLM_MODE=canned uvicorn app.concierge:app --port 8000
 | `app/concierge.py` | The concierge: UI/API server, actor lifecycle, yield executor, sweeper |
 | `app/ate_client.py` | Real gRPC/router client for the ate plane + the in-memory fake |
 | `app/template_manager.py` | Registers the digest-pinned ActorTemplate from the pod's own imageID |
-| `app/personas.py` | The 12 guests (names, personalities, prompts) |
+| `app/personas.py` | The guest roster: 20 personas (12 admitted at start; `+ Guest` adds more) |
 | `frontend/` | Hotel floor-plan UI |
 | `infra/` | Per-namespace manifests: RBAC, concierge, Service/Gateway/HTTPRoute, WorkerPool |
 | `cluster/` | One-per-cluster Substrate control-plane installer ([details](cluster/README.md)) |
@@ -92,9 +101,24 @@ ATE_MODE=fake LLM_MODE=canned uvicorn app.concierge:app --port 8000
 
 ## Operational notes
 
-- **Waking takes ~30 s** (checkpoint restore from GCS). The UI says so
+- **Waking takes ~10–30 s** (checkpoint restore from GCS). The UI says so
   honestly, and `infra/backend-policy.yaml` stretches the LB timeout to 180 s
-  so wake requests aren't cut off.
+  so wake requests aren't cut off. The concierge also retries transient
+  router failures (cold pulls, full-hotel contention, misdirects) for ~30 s
+  before surfacing an error.
+- **`deploy_app.sh` ends warm and clean**: after the rollout it chats once
+  per room (pre-pulling the rebuilt image onto each room's node), then
+  resets the hotel. Rollouts are hitless — the concierge drains for 60 s on
+  termination so the load balancer never serves "no healthy upstream" — but
+  the very first deploy still waits ~3–5 min for Gateway programming.
+- **Org-managed IAM projects**: if something periodically rewrites your
+  project's IAM policy (wiping the installer's Workload Identity grants),
+  set `WI_IMPERSONATE_GSA` in `.env` — see `.env.example`. The hotel's KSAs
+  then impersonate that GSA via SA-resource-level bindings, which such
+  sweeps don't touch.
+- **GKE auto-upgrades restart everything** (control plane, nodes, the whole
+  ate plane) and guests recover from snapshots — but set a cluster
+  maintenance window if you demo at unpredictable hours.
 - **Conversations live in snapshots**: suspended guests' RAM (including chat
   history) is stored in `gs://<project>-substrate-snapshots/substrate-hotel/`.
   "Reset" deletes the actors; the bucket outlives teardown.

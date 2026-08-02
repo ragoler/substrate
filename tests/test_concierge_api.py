@@ -125,6 +125,21 @@ def test_open_and_reset(concierge_client):
     assert s["meter"]["checked_in"] == 0
 
 
+def test_reset_deletes_awake_guests(concierge_client):
+    """Reset while guests are RUNNING: the plane refuses a direct delete, so
+    the concierge must suspend first (regression: reset used to error with
+    'Actor X is not suspended (status: STATUS_RUNNING)')."""
+    for g in ["marisol", "viktor"]:
+        concierge_client.post(f"/api/guests/{g}/chat", json={"message": "hi"})
+    s = concierge_client.get("/api/state").json()
+    assert s["meter"]["awake"] == 2
+
+    r = concierge_client.post("/api/reset").json()
+    assert r["errors"] == []
+    s = concierge_client.get("/api/state").json()
+    assert s["meter"]["checked_in"] == 0
+
+
 def test_add_guest_expands_capacity(concierge_client):
     from app import personas
 

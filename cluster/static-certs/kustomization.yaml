@@ -116,6 +116,26 @@ patches:
   # servicedns-ca ClusterTrustBundle source swapped for the Secret).
   - path: patches.yaml
 
+  # --- 2b. atelet must run on EVERY node a worker pod can land on — suspend/
+  # resume calls it on the worker's node. Nodes auto-provisioned for the
+  # hotel-rooms ComputeClass (cluster/compute-class.yaml) carry a NoSchedule
+  # taint cloud.google.com/compute-class that the base DaemonSet (no
+  # tolerations) does not tolerate, leaving those nodes atelet-less and every
+  # ResumeActor failing with "found 0 atelet pods on node".
+  - target:
+      group: apps
+      version: v1
+      kind: DaemonSet
+      name: atelet
+      namespace: ate-system
+    patch: |-
+      - op: add
+        path: /spec/template/spec/tolerations
+        value:
+          - key: cloud.google.com/compute-class
+            operator: Exists
+            effect: NoSchedule
+
   # --- 3. Args: same jwt-mode flags as the upstream jwt overlay. Note the base
   # manifests already set --ateapi-ca-file=/run/servicedns-ca/trust-bundle.pem
   # on controller + router (the mount patches.yaml provides), so no ca-file
