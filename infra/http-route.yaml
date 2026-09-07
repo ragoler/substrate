@@ -1,4 +1,10 @@
-# Everything on the Gateway goes to the concierge (UI + API).
+# Everything on the Gateway goes to the concierge (UI + API) — EXCEPT the
+# cluster-internal paths. /internal/* and /llm are for guests calling the
+# concierge pod-to-pod (yield requests, the Vertex proxy fallback); exposing
+# /llm on the internet would hand out free Gemini calls on our bill. Gateway
+# API gives the longest path match precedence, so the redirect rule below
+# always wins over the catch-all — external callers just bounce to the UI.
+# (The concierge also refuses LB-stamped requests to these paths itself.)
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -8,6 +14,20 @@ spec:
   parentRefs:
     - name: substrate-hotel-gw
   rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /internal
+        - path:
+            type: PathPrefix
+            value: /llm
+      filters:
+        - type: RequestRedirect
+          requestRedirect:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /
+            statusCode: 302
     - matches:
         - path:
             type: PathPrefix

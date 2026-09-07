@@ -9,6 +9,12 @@ metadata:
 spec:
   default:
     timeoutSec: 180
+    # Log every LB request to Cloud Logging — statusDetails there says WHY a
+    # request failed at the LB (e.g. failed_to_pick_backend vs backend 5xx),
+    # which is the only way to diagnose "no healthy upstream" reports.
+    logging:
+      enabled: true
+      sampleRate: 1000000  # parts-per-million == 100%
   targetRef:
     group: ""
     kind: Service

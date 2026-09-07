@@ -20,13 +20,16 @@ how the test suite and local dev exercise everything.
 """
 
 import asyncio
+import base64
 import logging
 import os
+import secrets
 import time
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -37,6 +40,11 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 LINGER_SECONDS = float(os.environ.get("LINGER_SECONDS", "10"))
+# Optional HTTP Basic auth for the public surface (UI + /api). The password
+# arrives via the substrate-hotel-auth Secret (see deploy_app.sh) — empty
+# means auth is disabled (local dev, tests, and the fake hotel).
+HOTEL_USERNAME = os.environ.get("HOTEL_USERNAME", "guest")
+HOTEL_PASSWORD = os.environ.get("HOTEL_PASSWORD", "")
 SWEEP_IDLE_SECONDS = float(os.environ.get("SWEEP_IDLE_SECONDS", "30"))
 SWEEP_INTERVAL_S = float(os.environ.get("SWEEP_INTERVAL_S", "5"))
 POD_NAMESPACE = os.environ.get("POD_NAMESPACE", "default")
@@ -51,19 +59,104 @@ FRONTEND_DIR = os.environ.get(
                  "frontend"),
 )
 
-app = FastAPI(title="Agent Hotel concierge")
+# Keep hard references to background tasks: asyncio only holds weak refs, so
+# an un-referenced sweeper/template-loop task can be garbage-collected mid-run.
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn(coro) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    _spawn(_sweeper())
+    _spawn(_loop_lag_monitor())
+    if not isinstance(ate, ate_client.FakeAteClient):
+        _spawn(_ensure_template_loop())
+    yield
+
+
+app = FastAPI(title="Agent Hotel concierge", lifespan=_lifespan)
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
+
+
+def _basic_auth_ok(header: str) -> bool:
+    if not header.lower().startswith("basic "):
+        return False
+    try:
+        user, _, password = base64.b64decode(header[6:]).decode().partition(":")
+    except Exception:
+        return False
+    # compare_digest both fields so neither leaks length/prefix via timing.
+    return secrets.compare_digest(user, HOTEL_USERNAME) & secrets.compare_digest(
+        password, HOTEL_PASSWORD
+    )
+
+
+@app.middleware("http")
+async def _request_telemetry(request, call_next):
+    """Log anything slow or 5xx — the trail for diagnosing LB-side
+    'no healthy upstream' reports (a slow /healthz can flap the LB check)."""
+    start = time.monotonic()
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception(
+            "request raised: %s %s after %.2fs",
+            request.method, request.url.path, time.monotonic() - start,
+        )
+        raise
+    took = time.monotonic() - start
+    if response.status_code >= 500 or took > 1.0:
+        logger.warning(
+            "slow/error request: %s %s -> %d in %.2fs",
+            request.method, request.url.path, response.status_code, took,
+        )
+    return response
+
+
+@app.middleware("http")
+async def _access_control(request, call_next):
+    path = request.url.path
+    if path == "/llm" or path.startswith("/internal/"):
+        # Guests call these pod-to-pod; the HTTPRoute never exposes them. If a
+        # request still arrives through the external LB (GCLB always stamps
+        # "Via: 1.1 google"), refuse it — belt-and-braces on top of the route.
+        if "google" in request.headers.get("via", "").lower():
+            return JSONResponse(
+                status_code=403, content={"detail": "cluster-internal endpoint"}
+            )
+    elif HOTEL_PASSWORD and path != "/healthz":
+        # /healthz stays open for kubelet probes and the LB health check.
+        if not _basic_auth_ok(request.headers.get("authorization", "")):
+            return Response(
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="Agent Hotel"'},
+            )
+    return await call_next(request)
+
 
 ate = ate_client.make_client()
 
 # Concierge-side bookkeeping (not the source of truth — Substrate is):
 #   activity[guest]  — monotonic ts of the last create/chat, gates yields;
 #   waking[guest]    — True while a chat is blocked on a router-driven resume,
-#                      so the UI can show "waking…" honestly.
+#                      so the UI can show "waking…" honestly;
+#   in_flight[guest] — number of chats currently awaiting the guest's reply.
+#     Suspending mid-reply kills the tunnel connection (the room deactivates
+#     and the client sees 502) — and it genuinely happens: a freshly RESTORED
+#     guest's linger loop sees its stale pre-suspend last_activity and asks
+#     to be tucked in while it is still composing the very reply it was woken
+#     for. Yields and sweeps must never land while a chat is in flight.
 activity: dict[str, float] = {}
 waking: dict[str, bool] = {}
+in_flight: dict[str, int] = {}
 template_name: str | None = None
 template_error: str | None = None
 # Guests currently admitted (a prefix of the roster). Grows via /api/guests/add,
@@ -191,10 +284,16 @@ async def chat(name: str, body: ChatIn):
         activity[name] = time.monotonic()
         if was_suspended:
             waking[name] = True
+        in_flight[name] = in_flight.get(name, 0) + 1
         try:
             result = await ate.chat(name, body.message)
         finally:
             waking.pop(name, None)
+            n = in_flight.get(name, 1) - 1
+            if n > 0:
+                in_flight[name] = n
+            else:
+                in_flight.pop(name, None)
         activity[name] = time.monotonic()
     except AteError as e:
         raise HTTPException(status_code=e.status, detail=e.detail)
@@ -238,7 +337,7 @@ async def open_hotel():
 
         await asyncio.gather(*(one(g) for g in names))
 
-    asyncio.create_task(check_in_all())
+    _spawn(check_in_all())
     return {"action": "open", "guests": len(names)}
 
 
@@ -307,6 +406,7 @@ async def reset_hotel():
     errors = [r for r in results if r]
     activity.clear()
     waking.clear()
+    in_flight.clear()
     return {"action": "reset", "errors": errors}
 
 
@@ -320,6 +420,8 @@ async def guest_yield(body: YieldIn):
     really been idle for the linger period.
     """
     name = _valid_guest(body.guest)
+    if in_flight.get(name):
+        return {"guest": name, "suspended": False, "reason": "chat in flight"}
     last = activity.get(name)
     if last is not None and time.monotonic() - last < LINGER_SECONDS:
         return {"guest": name, "suspended": False, "reason": "recent activity"}
@@ -349,11 +451,38 @@ async def llm_proxy(body: LlmIn):
 
 
 # --- Background tasks ----------------------------------------------------------
+async def _loop_lag_monitor():
+    """Log when the event loop stalls.
+
+    The kubelet probes and the LB health check both ride /healthz; if the
+    single event loop is blocked, those time out and — with one replica —
+    the whole site shows 'no healthy upstream'. This makes such stalls
+    visible in the pod log with their duration.
+    """
+    while True:
+        t0 = time.monotonic()
+        await asyncio.sleep(1.0)
+        lag = time.monotonic() - t0 - 1.0
+        if lag > 0.5:
+            logger.warning("event loop stalled for %.2fs (blocked/overloaded)", lag)
+
+
+# Consecutive /idlez failures per guest — a few sweeps of grace before a
+# genuinely unreachable (wedged) actor is reaped.
+_idlez_failures: dict[str, int] = {}
+
+
 async def _sweeper():
     """Suspend guests idle > SWEEP_IDLE_SECONDS.
 
     The backstop behind guest-initiated yields — and the mechanism that frees
     a room when all workers are busy and a sleeping guest gets a message.
+
+    With TWO concierge replicas, this pod's activity/in_flight dicts cannot
+    prove a guest is idle — the other replica may be mid-chat with it (the
+    regression: replica B suspended guests replica A had just woken, 2s after
+    restore). So before suspending, ask the GUEST itself via /idlez; it knows
+    its own in-flight requests and last-chat time.
     """
     while True:
         await asyncio.sleep(SWEEP_INTERVAL_S)
@@ -363,15 +492,36 @@ async def _sweeper():
             continue
         now = time.monotonic()
         for name, actor in actors.items():
-            if actor["status"] != "awake" or waking.get(name):
+            if actor["status"] != "awake" or waking.get(name) or in_flight.get(name):
                 continue
             last = activity.get(name)
-            if last is None or now - last >= SWEEP_IDLE_SECONDS:
-                try:
-                    if await ate.suspend_actor(name):
-                        logger.info("sweeper tucked %s in", name)
-                except AteError as e:
-                    logger.warning("sweeper suspend %s failed: %s", name, e.detail)
+            if last is not None and now - last < SWEEP_IDLE_SECONDS:
+                continue
+            try:
+                idle = await ate.idlez(name)
+                _idlez_failures.pop(name, None)
+                busy = idle.get("in_flight", 0) > 0 or (
+                    idle.get("idle_s") is not None
+                    and idle["idle_s"] < LINGER_SECONDS
+                )
+                if busy:
+                    activity[name] = now  # remember what we learned locally
+                    continue
+            except AteError as e:
+                # Unreachable guests get a few sweeps' grace (a just-restored
+                # listener may still be warming up), then are reaped as wedged.
+                n = _idlez_failures.get(name, 0) + 1
+                _idlez_failures[name] = n
+                if n < 3:
+                    logger.info("sweeper: %s unreachable (%d/3): %s",
+                                name, n, e.detail)
+                    continue
+            try:
+                if await ate.suspend_actor(name):
+                    _idlez_failures.pop(name, None)
+                    logger.info("sweeper tucked %s in", name)
+            except AteError as e:
+                logger.warning("sweeper suspend %s failed: %s", name, e.detail)
 
 
 async def _ensure_template_loop():
@@ -397,13 +547,6 @@ async def _ensure_template_loop():
         if template_name is None:
             await asyncio.sleep(10)
     logger.info("ActorTemplate ready: %s", template_name)
-
-
-@app.on_event("startup")
-async def _startup():
-    asyncio.create_task(_sweeper())
-    if not isinstance(ate, ate_client.FakeAteClient):
-        asyncio.create_task(_ensure_template_loop())
 
 
 # --- Static UI (mounted last so /api and /internal win) -------------------------

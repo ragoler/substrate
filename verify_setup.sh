@@ -5,25 +5,24 @@
 #   3. wait past the linger               -> guest shows "suspended"
 #   4. chat again (resume-on-request)     -> reply references the conversation,
 #                                            boot_id still A, history grew
-set -e
+set -euo pipefail
 
-if [ -f .env ]; then
-  source .env
-else
-  echo "Error: .env file not found. Create one with: cp .env.example .env"
-  exit 1
-fi
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${ROOT}/lib.sh"
+load_env
+init_curl_auth
 
-REGION="${REGION:-${ZONE%-*}}"
-NAMESPACE="${NAMESPACE:-default}"
 GUEST="${GUEST:-amara}"
 LINGER="${LINGER_SECONDS:-10}"
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GATEWAY_NAME=$(awk '/kind: Gateway/{f=1} f&&/^  name:/{print $2; exit}' "${ROOT}/infra/gateway.yaml")
+GATEWAY_NAME=$(manifest_name Gateway "${ROOT}/infra/gateway.yaml")
+# The guest yields after LINGER seconds; the sweeper backstop adds up to
+# SWEEP_IDLE_SECONDS (30) + one sweep interval + suspend/snapshot time.
+MAX_SUSPEND_WAIT=$(( LINGER + 110 ))
 
 pass() { echo "  ✅ $*"; }
 fail() { echo "  ❌ $*"; exit 1; }
 jsonget() { python3 -c "import json,sys;d=json.load(sys.stdin);print(eval(sys.argv[1], {}, {'d': d}))" "$1"; }
+hotel_curl() { curl ${CURL_AUTH[@]+"${CURL_AUTH[@]}"} "$@"; }
 
 echo "=== Targeting cluster ${CLUSTER_NAME} (${ZONE}) ==="
 gcloud container clusters get-credentials "${CLUSTER_NAME}" --zone="${ZONE}" --project="${PROJECT_ID}" >/dev/null
@@ -40,14 +39,20 @@ BASE="http://${GATEWAY_IP}"
 
 echo "=== 3/6 Health + hotel state ==="
 curl -sf --max-time 10 "${BASE}/healthz" >/dev/null && pass "/healthz ok" || fail "/healthz unreachable"
-STATE=$(curl -sf --max-time 15 "${BASE}/api/state") || fail "/api/state unreachable"
+if [ -n "${HOTEL_PASSWORD:-}" ]; then
+  # Basic auth is on: no credentials must be 401, ours must work.
+  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "${BASE}/api/state" || true)
+  [ "${CODE}" = "401" ] && pass "auth enforced (401 without credentials)" \
+    || fail "expected 401 without credentials, got ${CODE}"
+fi
+STATE=$(hotel_curl -sf --max-time 15 "${BASE}/api/state") || fail "/api/state unreachable (with credentials)"
 WORKERS=$(echo "${STATE}" | jsonget "d['meter']['workers']")
 [ "${WORKERS}" -ge 1 ] && pass "${WORKERS} worker room(s) visible" || fail "no workers — is the WorkerPool reconciled?"
 TEMPLATE_ERR=$(echo "${STATE}" | jsonget "d.get('template_error') or ''")
 [ -z "${TEMPLATE_ERR}" ] && pass "ActorTemplate registered" || fail "template error: ${TEMPLATE_ERR}"
 
 echo "=== 4/6 First chat with ${GUEST} (check-in + golden-snapshot start) ==="
-R1=$(curl -sf --max-time 180 -X POST "${BASE}/api/guests/${GUEST}/chat" \
+R1=$(hotel_curl -sf --max-time 180 -X POST "${BASE}/api/guests/${GUEST}/chat" \
   -H 'Content-Type: application/json' \
   -d '{"message": "Hello! Please remember my favorite color is teal."}') \
   || fail "first chat failed"
@@ -55,11 +60,11 @@ BOOT1=$(echo "${R1}" | jsonget "d['boot_id']")
 H1=$(echo "${R1}" | jsonget "d['history_len']")
 pass "reply received (boot_id ${BOOT1}, history_len ${H1})"
 
-echo "=== 5/6 Waiting for ${GUEST} to yield the room (linger ${LINGER}s + sweep) ==="
+echo "=== 5/6 Waiting for ${GUEST} to yield the room (linger ${LINGER}s + sweep; up to ${MAX_SUSPEND_WAIT}s) ==="
 SUSPENDED=false
-for i in $(seq 1 24); do
+for i in $(seq 1 $(( MAX_SUSPEND_WAIT / 5 ))); do
   sleep 5
-  ST=$(curl -sf --max-time 15 "${BASE}/api/state" \
+  ST=$(hotel_curl -sf --max-time 15 "${BASE}/api/state" \
     | jsonget "[g['status'] for g in d['guests'] if g['name']=='${GUEST}'][0]") || true
   if [ "${ST}" = "suspended" ]; then SUSPENDED=true; break; fi
 done
@@ -67,7 +72,7 @@ done
   || fail "${GUEST} never suspended — check the concierge logs (yield/sweeper)"
 
 echo "=== 6/6 Second chat — resume-on-request memory proof ==="
-R2=$(curl -sf --max-time 180 -X POST "${BASE}/api/guests/${GUEST}/chat" \
+R2=$(hotel_curl -sf --max-time 180 -X POST "${BASE}/api/guests/${GUEST}/chat" \
   -H 'Content-Type: application/json' \
   -d '{"message": "Welcome back! What is my favorite color?"}') \
   || fail "second chat failed (resume path)"

@@ -16,6 +16,7 @@ neither installed.
 import logging
 import os
 import threading
+import time
 
 from app import personas
 
@@ -25,7 +26,12 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
 _client = None
 _client_lock = threading.Lock()
-_client_failed = False
+# After a failed init, don't retry before this monotonic instant. A transient
+# failure (metadata server hiccup right after a resume) must not permanently
+# downgrade the guest to canned replies — the process lives across many
+# suspend/resume cycles.
+_client_retry_at = 0.0
+_CLIENT_RETRY_S = float(os.environ.get("LLM_INIT_RETRY_S", "60"))
 
 
 def _mode() -> str:
@@ -38,12 +44,17 @@ def _mode() -> str:
 
 
 def _vertex_client():
-    """Lazily build one genai client per process (thread-safe)."""
-    global _client, _client_failed
-    if _client is not None or _client_failed:
+    """Lazily build one genai client per process (thread-safe).
+
+    Failed inits are retried after _CLIENT_RETRY_S rather than latched off.
+    """
+    global _client, _client_retry_at
+    if _client is not None:
         return _client
+    if time.monotonic() < _client_retry_at:
+        return None
     with _client_lock:
-        if _client is not None or _client_failed:
+        if _client is not None or time.monotonic() < _client_retry_at:
             return _client
         try:
             from google import genai  # lazy: not needed offline
@@ -55,9 +66,11 @@ def _vertex_client():
             )
             logger.info("Gemini client initialized (Vertex AI, ADC)")
         except Exception:
-            logger.warning("Vertex AI client init failed; using canned replies",
-                           exc_info=True)
-            _client_failed = True
+            logger.warning(
+                "Vertex AI client init failed; canned replies for the next "
+                "%.0fs, then retry", _CLIENT_RETRY_S, exc_info=True,
+            )
+            _client_retry_at = time.monotonic() + _CLIENT_RETRY_S
     return _client
 
 

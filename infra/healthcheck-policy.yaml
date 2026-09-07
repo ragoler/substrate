@@ -1,0 +1,35 @@
+# Point the GCLB health check at /healthz. Without this the Gateway
+# controller health-checks "/" — which returns 401 once HOTEL_PASSWORD is
+# set (HTTP Basic auth), and the LB would mark the backend unhealthy and
+# take the whole site down. /healthz is always unauthenticated.
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: substrate-hotel-healthcheck
+  namespace: ${NAMESPACE}
+spec:
+  default:
+    # The concierge is a SINGLE replica, so this check's job is asymmetric:
+    #   - going HEALTHY must be fast (1 quick success) so post-rollout
+    #     windows last seconds, not minutes;
+    #   - going UNHEALTHY must be RELUCTANT (10 consecutive misses ≈ 50 s):
+    #     with one endpoint there is nothing to fail over to — marking it
+    #     unhealthy just turns slow responses into "no healthy upstream".
+    checkIntervalSec: 5
+    timeoutSec: 5
+    healthyThreshold: 1
+    unhealthyThreshold: 10
+    # Log health-state transitions to Cloud Logging (resource type
+    # gce_instance_group / health check logs) so flaps are diagnosable.
+    logConfig:
+      enabled: true
+    config:
+      type: HTTP
+      httpHealthCheck:
+        # The NEG targets the pod's serving port directly.
+        port: 8000
+        requestPath: /healthz
+  targetRef:
+    group: ""
+    kind: Service
+    name: substrate-hotel-concierge

@@ -8,7 +8,14 @@ metadata:
   labels:
     app: substrate-hotel-concierge
 spec:
-  replicas: 1
+  # Two replicas on different nodes: the public LB occasionally hits
+  # connection-level resets on one endpoint (scanner traffic churning the
+  # shared connection pool, node-level blips) — with a second endpoint GCLB
+  # retries there and visitors never see it. Guest yield-gating stays correct
+  # across replicas because the GUEST itself refuses to yield mid-request
+  # (agent-side in-flight guard); the concierge dicts (activity/waking) are
+  # per-pod best-effort and converge via Substrate, the source of truth.
+  replicas: 2
   selector:
     matchLabels:
       app: substrate-hotel-concierge
@@ -18,6 +25,15 @@ spec:
         app: substrate-hotel-concierge
     spec:
       serviceAccountName: substrate-hotel-concierge
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: substrate-hotel-concierge
+                topologyKey: kubernetes.io/hostname
       # The GCLB data plane lags ~1-2 min detaching a killed endpoint from the
       # NEG; without this drain the site serves "no healthy upstream" after
       # every rollout of this single-replica deployment.
@@ -32,6 +48,13 @@ spec:
                 command: ["sleep", "60"]
           ports:
             - containerPort: 8000
+          # HOTEL_USERNAME / HOTEL_PASSWORD for HTTP Basic auth. The Secret is
+          # created by deploy_app.sh from .env (never rendered into manifests);
+          # optional: with no Secret the hotel simply runs unauthenticated.
+          envFrom:
+            - secretRef:
+                name: substrate-hotel-auth
+                optional: true
           env:
             - name: ATE_MODE
               value: "real"
@@ -41,6 +64,12 @@ spec:
               value: "${GUEST_COUNT}"
             - name: WORKER_REPLICAS
               value: "${WORKER_REPLICAS}"
+            # Seconds a guest lingers awake after its last reply. The
+            # concierge both gates /internal/yield with it AND bakes it into
+            # the guest ActorTemplate env (template_manager.py) — it must
+            # reach this pod or .env's LINGER_SECONDS silently does nothing.
+            - name: LINGER_SECONDS
+              value: "${LINGER_SECONDS}"
             # Downward API — the concierge reads its own pod to learn its
             # image digest (see app/template_manager.py).
             - name: POD_NAME
@@ -67,16 +96,24 @@ spec:
             - name: ate-api-token
               mountPath: /var/run/secrets/tokens
               readOnly: true
+          # timeoutSeconds: the default is 1s — a briefly busy event loop
+          # then fails 3 probes in a row, the pod goes NotReady, the NEG
+          # detaches its ONLY endpoint, and the site shows "no healthy
+          # upstream". Readiness is deliberately hard to lose.
           startupProbe:
             httpGet: { path: /healthz, port: 8000 }
             failureThreshold: 30
             periodSeconds: 2
+            timeoutSeconds: 5
           readinessProbe:
             httpGet: { path: /healthz, port: 8000 }
             periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 6
           livenessProbe:
             httpGet: { path: /healthz, port: 8000 }
             periodSeconds: 15
+            timeoutSeconds: 5
           resources:
             requests: { cpu: 100m, memory: 256Mi }
             limits: { cpu: "1", memory: 512Mi }

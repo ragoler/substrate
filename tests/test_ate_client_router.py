@@ -26,8 +26,9 @@ from app.ate_client import AteError, RealAteClient
 
 
 class FakeResponse:
-    def __init__(self, status_code, body=None):
+    def __init__(self, status_code, body=None, text=""):
         self.status_code = status_code
+        self.text = text
         self._body = body if body is not None else {"ok": True}
 
     def json(self):
@@ -41,6 +42,7 @@ class FakeHttpx(types.ModuleType):
         super().__init__("httpx")
         self.responses = list(responses)
         self.calls = []
+        self.clients_built = 0
 
         class HTTPError(Exception):
             pass
@@ -51,7 +53,7 @@ class FakeHttpx(types.ModuleType):
 
         class AsyncClient:
             def __init__(self, timeout=None):
-                pass
+                stub.clients_built += 1
 
             async def __aenter__(self):
                 return self
@@ -74,10 +76,11 @@ def router_env(monkeypatch):
 
     def setup(responses):
         fake = FakeHttpx(responses)
+        fake.sleeps = []
         monkeypatch.setitem(sys.modules, "httpx", fake)
 
-        async def no_sleep(_):
-            return None
+        async def no_sleep(seconds):
+            fake.sleeps.append(seconds)
 
         # Neutralize backoff so exhausting 6 attempts doesn't take ~30 s.
         monkeypatch.setattr(
@@ -85,6 +88,7 @@ def router_env(monkeypatch):
             types.SimpleNamespace(sleep=no_sleep),
         )
         client = RealAteClient.__new__(RealAteClient)
+        client._http = None  # __init__ (skipped: imports grpc) would set this
         return client, fake
 
     return setup
@@ -126,6 +130,34 @@ def test_retries_are_bounded_then_502(router_env):
     assert e.value.status == 502
     assert "500" in e.value.detail
     assert len(fake.calls) == 6
+    # Backoff happens BETWEEN attempts only — no wasted sleep after the final
+    # failure (that used to add ~12 s to every hard error).
+    assert len(fake.sleeps) == 5
+    # One shared AsyncClient across all attempts (connection reuse).
+    assert fake.clients_built == 1
+
+
+def test_router_error_body_reaches_the_detail(router_env):
+    """The router's body usually carries the real reason (resume failure, no
+    free worker, …) — it must surface in the AteError, not just the code."""
+    client, fake = router_env(
+        [FakeResponse(503, text="no free worker slot to resume onto")] * 6
+    )
+    with pytest.raises(AteError) as e:
+        run(client._router("POST", "amara", "/chat", {"message": "hi"}))
+    assert "503" in e.value.detail
+    assert "no free worker slot" in e.value.detail
+
+
+def test_non_json_success_body_is_502(router_env):
+    class HtmlResponse(FakeResponse):
+        def json(self):
+            raise ValueError("not json")
+
+    client, fake = router_env([HtmlResponse(200, text="<html>oops</html>")])
+    with pytest.raises(AteError) as e:
+        run(client._router("GET", "amara", "/history"))
+    assert "non-JSON" in e.value.detail
 
 
 def test_504_is_retried_for_get_but_not_post(router_env):
@@ -143,6 +175,28 @@ def test_504_is_retried_for_get_but_not_post(router_env):
 
 def test_non_retriable_status_fails_immediately(router_env):
     client, fake = router_env([FakeResponse(404)])
+    with pytest.raises(AteError):
+        run(client._router("POST", "ezra", "/chat", {"message": "hi"}))
+    assert len(fake.calls) == 1
+
+
+def test_atunnel_bad_gateway_502_is_retried(router_env):
+    """The worker tunnel answers a bare 'bad gateway' when the just-restored
+    guest isn't accepting yet — pre-delivery, so safe to retry."""
+    client, fake = router_env(
+        [FakeResponse(502, text="bad gateway\n"), FakeResponse(200, {"guest": "ezra"})]
+    )
+    out = run(client._router("POST", "ezra", "/chat", {"message": "hi"}))
+    assert out == {"guest": "ezra"}
+    assert len(fake.calls) == 2
+
+
+def test_other_502_bodies_are_not_retried(router_env):
+    """An Envoy-generated 502 (connection termination mid-stream) may mean
+    the guest already got the message — retrying could duplicate a turn."""
+    client, fake = router_env(
+        [FakeResponse(502, text="upstream connect error or disconnect/reset before headers")]
+    )
     with pytest.raises(AteError):
         run(client._router("POST", "ezra", "/chat", {"message": "hi"}))
     assert len(fake.calls) == 1

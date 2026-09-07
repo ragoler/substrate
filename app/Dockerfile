@@ -19,4 +19,10 @@ COPY ateapipb /srv/ateapipb
 COPY frontend /srv/frontend
 
 EXPOSE 8000
-CMD ["uvicorn", "app.concierge:app", "--host", "0.0.0.0", "--port", "8000"]
+# --timeout-keep-alive 620 > the GCLB's fixed 600s backend idle timeout.
+# Uvicorn's default (5s) closes idle keepalive connections that the LB still
+# considers reusable; the race surfaces to visitors as intermittent 503
+# "backend_connection_closed_before_data_sent_to_client" / "no healthy
+# upstream". The side that owns the longer timeout must be the backend.
+CMD ["uvicorn", "app.concierge:app", "--host", "0.0.0.0", "--port", "8000", \
+     "--timeout-keep-alive", "620"]

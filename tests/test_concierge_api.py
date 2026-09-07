@@ -1,10 +1,73 @@
 """The concierge against the fake plane: the whole hotel lifecycle offline."""
 
+import base64
 import time
+
+
+def _basic(user: str, password: str) -> dict:
+    token = base64.b64encode(f"{user}:{password}".encode()).decode()
+    return {"Authorization": f"Basic {token}"}
 
 
 def test_healthz(concierge_client):
     assert concierge_client.get("/healthz").json() == {"status": "ok"}
+
+
+def test_basic_auth_guards_ui_and_api(concierge_client):
+    from app import concierge as mod
+    mod.HOTEL_USERNAME = "guest"
+    mod.HOTEL_PASSWORD = "s3cret"          # fresh module per test — no leakage
+
+    # Missing or wrong credentials: 401 with the browser-prompt challenge.
+    r = concierge_client.get("/api/state")
+    assert r.status_code == 401
+    assert r.headers["WWW-Authenticate"].startswith("Basic")
+    assert concierge_client.get(
+        "/", headers=_basic("guest", "wrong")
+    ).status_code == 401
+    assert concierge_client.post(
+        "/api/guests/amara/chat", json={"message": "hi"},
+        headers=_basic("intruder", "s3cret"),
+    ).status_code == 401
+
+    # /healthz stays open: kubelet probes and the LB health check need it.
+    assert concierge_client.get("/healthz").status_code == 200
+
+    # Correct credentials: UI and API work.
+    assert concierge_client.get(
+        "/api/state", headers=_basic("guest", "s3cret")
+    ).status_code == 200
+    assert concierge_client.get(
+        "/", headers=_basic("guest", "s3cret")
+    ).status_code == 200
+
+
+def test_basic_auth_skips_guest_facing_endpoints(concierge_client):
+    """Guests call /internal/yield and /llm pod-to-pod with no credentials —
+    Basic auth must not apply there (the HTTPRoute keeps them off the LB)."""
+    from app import concierge as mod
+    mod.HOTEL_PASSWORD = "s3cret"
+
+    assert concierge_client.post(
+        "/llm", json={"guest": "ezra", "message": "hi", "history": []}
+    ).status_code == 200
+    assert concierge_client.post(
+        "/internal/yield", json={"guest": "ezra"}
+    ).status_code == 200
+
+
+def test_internal_endpoints_refuse_lb_stamped_requests(concierge_client):
+    """Belt-and-braces behind the HTTPRoute lockdown: a request that reaches
+    /internal/* or /llm THROUGH the external LB (GCLB stamps Via: 1.1 google)
+    is refused even if the route somehow let it in."""
+    lb = {"Via": "1.1 google"}
+    assert concierge_client.post(
+        "/llm", json={"guest": "ezra", "message": "hi", "history": []},
+        headers=lb,
+    ).status_code == 403
+    assert concierge_client.post(
+        "/internal/yield", json={"guest": "ezra"}, headers=lb
+    ).status_code == 403
 
 
 def test_state_shape_empty_hotel(concierge_client):
@@ -60,6 +123,25 @@ def test_yield_suspends_only_when_idle(concierge_client):
     kai = next(g for g in s["guests"] if g["name"] == "kai")
     assert kai["status"] == "suspended"
     assert kai["worker_pod"] is None
+
+
+def test_yield_refused_while_chat_in_flight(concierge_client):
+    """A restored guest's linger loop can ask to be tucked in while it is
+    still composing the reply it was woken for — suspending then kills the
+    tunnel mid-reply (visitors saw 502s). The in-flight guard must win over
+    the idle-time gate."""
+    from app import concierge as mod
+
+    concierge_client.post("/api/guests/kai/chat", json={"message": "hi"})
+    mod.activity["kai"] = time.monotonic() - 999   # idle-gate would allow it
+    mod.in_flight["kai"] = 1                       # ...but a chat is in flight
+    r = concierge_client.post("/internal/yield", json={"guest": "kai"}).json()
+    assert r["suspended"] is False
+    assert r["reason"] == "chat in flight"
+
+    mod.in_flight.pop("kai")
+    r = concierge_client.post("/internal/yield", json={"guest": "kai"}).json()
+    assert r["suspended"] is True
 
 
 def test_resume_on_request_preserves_ram(concierge_client):

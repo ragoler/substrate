@@ -5,15 +5,12 @@
 #
 # Prereq-script toolchain: gcloud, kubectl, git, go, ko (https://ko.build),
 # openssl — the ate operators are built from upstream source with `ko`.
-set -e
+set -euo pipefail
 
 # --- Load configuration ------------------------------------------------------
-if [ -f .env ]; then
-  source .env
-else
-  echo "Error: .env file not found. Create one with: cp .env.example .env"
-  exit 1
-fi
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${ROOT}/lib.sh"
+load_env
 
 for cmd in gcloud kubectl python3 git go ko openssl; do
   if ! command -v "$cmd" &>/dev/null; then
@@ -21,9 +18,6 @@ for cmd in gcloud kubectl python3 git go ko openssl; do
     exit 1
   fi
 done
-
-REGION="${REGION:-${ZONE%-*}}"
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # --- Mode dispatch -------------------------------------------------------------
 #   (no flag)         create cluster + install the ate plane
@@ -87,13 +81,17 @@ if cluster_exists; then
       || echo "NAP update failed; continuing (it may already be enabled)."
   fi
 else
+  # Rapid channel: the substrate plane needs K8s 1.36+ for the beta
+  # PodCertificate/ClusterTrustBundle APIs its component mTLS runs on.
   gcloud container clusters create "${CLUSTER_NAME}" \
     --project="${PROJECT_ID}" \
     --zone="${ZONE}" \
     --machine-type="${MACHINE_TYPE}" \
     --num-nodes="${NUM_NODES}" \
+    --release-channel=rapid \
     --gateway-api=standard \
     --workload-pool="${PROJECT_ID}.svc.id.goog" \
+    --enable-kubernetes-unstable-apis=certificates.k8s.io/v1beta1/podcertificaterequests,certificates.k8s.io/v1beta1/clustertrustbundles \
     ${NAP_FLAGS[@]+"${NAP_FLAGS[@]}"}
 fi
 
@@ -107,10 +105,7 @@ fi
 
 # --- Step 3: Artifact Registry (the prereq's ko build pushes here) -------------
 echo "=== Step 3: Ensuring Artifact Registry repo ${ARTIFACT_REGISTRY_REPO} ==="
-gcloud artifacts repositories create "${ARTIFACT_REGISTRY_REPO}" \
-  --repository-format=docker --location="${REGION}" \
-  --description="Agent Hotel images" --project="${PROJECT_ID}" \
-  || echo "Repo may already exist; continuing."
+ensure_ar_repo
 
 # --- Step 4: The Agent Substrate control plane ----------------------------------
 # One idempotent script: CRDs, ate-api-server + valkey + router + dns +

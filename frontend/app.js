@@ -27,7 +27,27 @@ function esc(s) {
 }
 
 async function api(path, opts) {
-  const resp = await fetch(path, opts);
+  // The public LB occasionally 502/503s a request the concierge NEVER saw
+  // (its shared backend-connection pool gets churned by internet scanners;
+  // "backend_connection_closed_before_data_sent"). Those responses carry the
+  // LB's plain-text body — retry them, they were not delivered. Real errors
+  // from the concierge carry a JSON {detail} and surface immediately.
+  let resp;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt) await new Promise((r) => setTimeout(r, 600 * attempt));
+    try {
+      resp = await fetch(path, opts);
+    } catch (e) {
+      if (attempt === 2) throw e;   // network-level failure: retry too
+      continue;
+    }
+    if (resp.status < 500) break;
+    let body = "";
+    try { body = await resp.clone().text(); } catch {}
+    let fromConcierge = false;
+    try { JSON.parse(body); fromConcierge = true; } catch {}
+    if (fromConcierge) break;       // genuine backend error — don't retry
+  }
   if (!resp.ok) {
     let detail = resp.statusText;
     try { detail = (await resp.json()).detail || detail; } catch {}

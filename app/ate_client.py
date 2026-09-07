@@ -5,11 +5,12 @@ Two interchangeable implementations, selected by env ATE_MODE:
   real — talks to the actual plane installed by
          cluster/install-substrate-hotel-prereq.sh:
            * control: gRPC to ate-api-server (api.ate-system.svc:443).
-             TLS is verified against the static CA the installer minted
-             (Secret ate-system/servicedns-ca); the bearer token is this
-             pod's own projected ServiceAccount token with audience
-             api.ate-system.svc (the api-server in --auth-mode=jwt accepts
-             any cluster-issuer token with that audience).
+             TLS is verified against Secret ate-system/servicedns-ca — a
+             shim the installer mirrors from the podcertificate controller's
+             service-dns CA pool; the bearer token is this pod's own
+             projected ServiceAccount token with audience api.ate-system.svc
+             (the api-server accepts any cluster-issuer token with that
+             audience).
            * data: HTTP through atenet-router with a
              Host: <guest>.hotel.actors... header. The router transparently
              RESUMES a suspended guest before proxying — resume-on-request.
@@ -67,6 +68,7 @@ class RealAteClient:
         self._token: str | None = None
         self._token_read_at = 0.0
         self._atespace_ready = False
+        self._http = None  # lazy shared httpx.AsyncClient (connection reuse)
 
     # -- auth plumbing ------------------------------------------------------
     def _read_ca_pem_sync(self) -> bytes:
@@ -125,7 +127,8 @@ class RealAteClient:
     def _ref(self, name: str):
         from ateapipb import ateapi_pb2
 
-        return ateapi_pb2.ActorRef(atespace=ATESPACE, name=name)
+        # Upstream tip: ActorRef became the generic ObjectRef.
+        return ateapi_pb2.ObjectRef(atespace=ATESPACE, name=name)
 
     # -- control plane ------------------------------------------------------
     async def ensure_atespace(self) -> None:
@@ -138,7 +141,12 @@ class RealAteClient:
         stub = await self._stub()
         try:
             await stub.CreateAtespace(
-                ateapi_pb2.CreateAtespaceRequest(name=ATESPACE),
+                # Tip API: requests carry the full resource, not a bare name.
+                ateapi_pb2.CreateAtespaceRequest(
+                    atespace=ateapi_pb2.Atespace(
+                        metadata=ateapi_pb2.ResourceMetadata(name=ATESPACE)
+                    )
+                ),
                 metadata=await self._md(),
             )
         except grpc.aio.AioRpcError as e:
@@ -155,13 +163,18 @@ class RealAteClient:
         stub = await self._stub()
         try:
             await stub.CreateActor(
+                # Tip API: the template refs + selector moved inside Actor.
                 ateapi_pb2.CreateActorRequest(
-                    actor_ref=self._ref(name),
-                    actor_template_namespace=template_ns,
-                    actor_template_name=template_name,
-                    worker_selector=ateapi_pb2.Selector(
-                        match_labels={"workload": WORKER_POOL}
-                    ),
+                    actor=ateapi_pb2.Actor(
+                        metadata=ateapi_pb2.ResourceMetadata(
+                            atespace=ATESPACE, name=name
+                        ),
+                        actor_template_namespace=template_ns,
+                        actor_template_name=template_name,
+                        worker_selector=ateapi_pb2.Selector(
+                            match_labels={"workload": WORKER_POOL}
+                        ),
+                    )
                 ),
                 metadata=await self._md(),
             )
@@ -178,7 +191,7 @@ class RealAteClient:
         stub = await self._stub()
         try:
             await stub.SuspendActor(
-                ateapi_pb2.SuspendActorRequest(actor_ref=self._ref(name)),
+                ateapi_pb2.SuspendActorRequest(actor=self._ref(name)),
                 metadata=await self._md(),
             )
             return True
@@ -199,7 +212,7 @@ class RealAteClient:
         stub = await self._stub()
         try:
             await stub.DeleteActor(
-                ateapi_pb2.DeleteActorRequest(actor_ref=self._ref(name)),
+                ateapi_pb2.DeleteActorRequest(actor=self._ref(name)),
                 metadata=await self._md(),
             )
         except grpc.aio.AioRpcError as e:
@@ -234,7 +247,8 @@ class RealAteClient:
                     metadata=md,
                 )
                 for actor in resp.actors:
-                    out[actor.actor_id] = {
+                    # Tip API: actor_id became metadata.name.
+                    out[actor.metadata.name] = {
                         "status": names.get(actor.status, "unknown"),
                         "worker_pod": actor.ateom_pod_name or None,
                     }
@@ -295,6 +309,13 @@ class RealAteClient:
         return count
 
     # -- data plane (resume-on-request) --------------------------------------
+    def _http_client(self):
+        import httpx
+
+        if self._http is None:
+            self._http = httpx.AsyncClient(timeout=CHAT_TIMEOUT_S)
+        return self._http
+
     async def _router(self, method: str, name: str, path: str, json_body=None) -> dict:
         import httpx
 
@@ -311,29 +332,45 @@ class RealAteClient:
         # Six attempts spanning ~30s of backoff: enough to ride out a full
         # linger cycle when every room is busy — an occupant yields after
         # LINGER_SECONDS idle, freeing a room for this guest's resume.
-        for attempt in range(6):
+        attempts = 6
+        for attempt in range(attempts):
             try:
-                async with httpx.AsyncClient(timeout=CHAT_TIMEOUT_S) as http:
-                    # X-Actor-Name travels alongside Host because the router's
-                    # Envoy rewrites Host to the upstream pod IP — the guest
-                    # cannot learn its name from Host alone.
-                    resp = await http.request(
-                        method, ROUTER_URL.rstrip("/") + path,
-                        headers={"Host": host, "X-Actor-Name": name},
-                        json=json_body,
-                    )
+                # X-Actor-Name travels alongside Host because the router's
+                # Envoy rewrites Host to the upstream pod IP — the guest
+                # cannot learn its name from Host alone.
+                resp = await self._http_client().request(
+                    method, ROUTER_URL.rstrip("/") + path,
+                    headers={"Host": host, "X-Actor-Name": name},
+                    json=json_body,
+                )
             except httpx.HTTPError as e:
                 raise AteError(502, f"router request failed: {e}")
             retriable = resp.status_code in (421, 500, 503) or (
                 resp.status_code == 504 and method == "GET"
+            ) or (
+                # The worker tunnel's reverse proxy answers a bare
+                # "bad gateway" when it cannot reach the guest — right after
+                # a restore the sandbox's listener may not accept yet. That
+                # failure is pre-delivery (the guest never saw the message),
+                # so retrying cannot duplicate a chat turn. Envoy-generated
+                # 502s carry different bodies and stay non-retriable.
+                resp.status_code == 502 and resp.text.strip() == "bad gateway"
             )
             if resp.status_code == 200 or not retriable:
                 break
-            logger.warning("router %d for %s (attempt %d); retrying",
-                           resp.status_code, name, attempt + 1)
-            await asyncio.sleep(2.0 * (attempt + 1))
+            if attempt < attempts - 1:
+                logger.warning("router %d for %s (attempt %d); retrying",
+                               resp.status_code, name, attempt + 1)
+                await asyncio.sleep(2.0 * (attempt + 1))
         if resp.status_code != 200:
-            raise AteError(502, f"router returned {resp.status_code} for {name}")
+            # The router's body usually carries the real reason (resume
+            # failure, no free worker, …) — surface it, not just the code.
+            body = " ".join(resp.text.split())[:300]
+            raise AteError(
+                502,
+                f"router returned {resp.status_code} for {name}"
+                + (f": {body}" if body else ""),
+            )
         try:
             return resp.json()
         except Exception:
@@ -344,6 +381,11 @@ class RealAteClient:
 
     async def history(self, name: str) -> dict:
         return await self._router("GET", name, "/history")
+
+    async def idlez(self, name: str) -> dict:
+        """The guest's own idle self-report (see the sweeper). Only call for
+        AWAKE actors — the router transparently resumes suspended ones."""
+        return await self._router("GET", name, "/idlez")
 
 
 # --------------------------------------------------------------------------
@@ -480,6 +522,13 @@ class FakeAteClient:
             "boot_id": actor["boot_id"],
             "history": actor["history"],
         }
+
+    async def idlez(self, name: str) -> dict:
+        # The fake hotel has no real guest process; report "idle" so the
+        # sweeper behaves as in the single-replica tests.
+        if name not in self.actors:
+            raise AteError(404, f"guest {name} is not checked in")
+        return {"guest": name, "in_flight": 0, "idle_s": None}
 
 
 def make_client():

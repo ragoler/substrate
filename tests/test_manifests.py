@@ -19,6 +19,7 @@ FAKE_VARS = {
     "GUEST_COUNT": "12",
     "WORKER_REPLICAS": "3",
     "WORKER_NODE_SELECTOR": "{}",
+    "LINGER_SECONDS": "10",
 }
 
 
@@ -151,29 +152,61 @@ def test_concierge_drains_on_termination():
 
 
 def test_atelet_tolerates_compute_class_nodes():
-    """The static-certs overlay must schedule atelet onto NAP nodes: rooms on
-    a Custom-Compute-Class node are unusable without a local atelet (every
-    ResumeActor fails with 'found 0 atelet pods on node')."""
-    kust = yaml.safe_load(
-        open(os.path.join(ROOT, "cluster", "static-certs", "kustomization.yaml"))
-    )
-    for patch in kust["patches"]:
-        target = patch.get("target", {})
-        if target.get("kind") != "DaemonSet" or target.get("name") != "atelet":
+    """The installer must schedule atelet onto NAP nodes: rooms on a
+    Custom-Compute-Class node are unusable without a local atelet (every
+    ResumeActor fails with 'found 0 atelet pods on node'). Upstream's
+    DaemonSet has no tolerations, so the installer patches one in."""
+    script = open(
+        os.path.join(ROOT, "cluster", "install-substrate-hotel-prereq.sh")
+    ).read()
+    patch_at = script.find("patch daemonset atelet")
+    assert patch_at != -1, "no atelet toleration patch in the installer"
+    patch_block = script[patch_at:patch_at + 400]
+    assert "cloud.google.com/compute-class" in patch_block
+    assert '"operator": "Exists"' in patch_block
+
+
+def test_internal_paths_never_reach_the_backend():
+    """/internal/* and /llm are cluster-internal (guest yield requests, the
+    Vertex proxy). The route must redirect them away instead of proxying —
+    an exposed /llm is a free Gemini proxy for the whole internet."""
+    routes = [d for _, d in rendered_docs() if d.get("kind") == "HTTPRoute"]
+    assert len(routes) == 1
+    blocked = [
+        r for r in routes[0]["spec"]["rules"]
+        if any(f.get("type") == "RequestRedirect" for f in r.get("filters", []))
+    ]
+    assert len(blocked) == 1, "no RequestRedirect rule for the internal paths"
+    paths = {m["path"]["value"] for m in blocked[0]["matches"]}
+    assert paths == {"/internal", "/llm"}
+    assert "backendRefs" not in blocked[0]
+
+
+def test_lb_health_check_targets_healthz():
+    """With Basic auth enabled '/' answers 401; the default GCLB health check
+    against '/' would mark the backend unhealthy and take the site down."""
+    policies = [d for _, d in rendered_docs() if d.get("kind") == "HealthCheckPolicy"]
+    assert len(policies) == 1
+    hc = policies[0]
+    assert hc["spec"]["targetRef"]["kind"] == "Service"
+    assert hc["spec"]["targetRef"]["name"] == "substrate-hotel-concierge"
+    check = hc["spec"]["default"]["config"]["httpHealthCheck"]
+    assert check["requestPath"] == "/healthz"
+    assert check["port"] == 8000
+
+
+def test_auth_secret_is_injected_and_optional():
+    """Basic-auth credentials come from the substrate-hotel-auth Secret
+    (created by deploy_app.sh, never rendered into manifests) and must be
+    optional — no Secret simply means an unauthenticated hotel."""
+    for fname, doc in rendered_docs():
+        if doc.get("kind") != "Deployment":
             continue
-        ops = yaml.safe_load(patch["patch"])
-        tolerations = [
-            t for op in ops if "tolerations" in op.get("path", "")
-            for t in op["value"]
-        ]
-        assert any(
-            t["key"] == "cloud.google.com/compute-class"
-            and t["operator"] == "Exists"
-            for t in tolerations
-        )
-        break
-    else:
-        raise AssertionError("no atelet toleration patch in static-certs overlay")
+        env_from = doc["spec"]["template"]["spec"]["containers"][0]["envFrom"]
+        secret_refs = [e["secretRef"] for e in env_from if "secretRef" in e]
+        assert secret_refs, f"no secretRef envFrom in {fname}"
+        assert secret_refs[0]["name"] == "substrate-hotel-auth"
+        assert secret_refs[0]["optional"] is True
 
 
 def test_projected_token_audience():

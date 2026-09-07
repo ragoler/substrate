@@ -1,5 +1,6 @@
-"""The guest agent in isolation: identity from Host header, RAM history,
-lazy boot_id, immediate readyz."""
+"""The guest agent in isolation: identity from X-Actor-Name (with the Host
+header as fallback), the 421 misdirect guard, RAM history, lazy boot_id,
+immediate readyz."""
 
 HOST = {"Host": "amara.hotel.actors.resources.substrate.ate.dev"}
 
@@ -62,6 +63,19 @@ def test_ip_shaped_host_never_becomes_a_name(agent_client):
         headers={"Host": "10.80.3.4:80", "X-Actor-Name": "amara"},
     ).json()
     assert r["guest"] == "amara"
+
+
+def test_idlez_self_report(agent_client):
+    # Before any chat: no last_activity, nothing in flight (the /idlez
+    # request itself is subtracted from the count).
+    r = agent_client.get("/idlez", headers=HOST).json()
+    assert r["in_flight"] == 0
+    assert r["idle_s"] is None
+
+    agent_client.post("/chat", json={"message": "hi"}, headers=HOST)
+    r = agent_client.get("/idlez", headers=HOST).json()
+    assert r["in_flight"] == 0
+    assert r["idle_s"] is not None and r["idle_s"] >= 0
 
 
 def test_misdirected_request_is_421(agent_client):

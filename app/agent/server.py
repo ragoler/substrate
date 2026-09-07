@@ -30,6 +30,7 @@ import logging
 import os
 import time
 import uuid
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -44,10 +45,40 @@ logger = logging.getLogger(__name__)
 LINGER_SECONDS = float(os.environ.get("LINGER_SECONDS", "10"))
 CONCIERGE_URL = os.environ.get("CONCIERGE_URL", "").rstrip("/")
 
-app = FastAPI(title="Agent Hotel guest")
+# Hard reference so the linger task can't be garbage-collected mid-run
+# (asyncio keeps only weak refs to tasks).
+_background_tasks: set[asyncio.Task] = set()
+
+# Requests currently being served. The linger loop must NEVER request a yield
+# while one is in flight: after a restore the checkpointed last_activity is
+# stale, and a long LLM reply would otherwise get its own actor suspended
+# mid-response (the room deactivates and the caller sees a 502).
+_in_flight = 0
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    if LINGER_SECONDS > 0:
+        task = asyncio.create_task(_linger_loop())
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+    yield
+
+
+app = FastAPI(title="Agent Hotel guest", lifespan=_lifespan)
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
+
+
+@app.middleware("http")
+async def _track_in_flight(request, call_next):
+    global _in_flight
+    _in_flight += 1
+    try:
+        return await call_next(request)
+    finally:
+        _in_flight -= 1
 
 # --- The state Substrate checkpoints ----------------------------------------
 state: dict = {
@@ -106,6 +137,10 @@ async def chat(body: ChatIn, request: Request):
     _ensure_identity(request)
     guest = state["guest"] or "guest"
     history = state["history"]
+    # Mark activity at START as well as completion: after a restore the
+    # checkpointed last_activity is stale, and the linger loop must not ask
+    # to be tucked in while this very reply is being composed.
+    state["last_activity"] = time.monotonic()
     # The LLM call may block for seconds; keep the event loop free.
     reply = await asyncio.to_thread(llm.reply, guest, body.message, list(history))
     history.append({"role": "user", "text": body.message})
@@ -116,6 +151,25 @@ async def chat(body: ChatIn, request: Request):
         "reply": reply,
         "boot_id": state["boot_id"],
         "history_len": len(history),
+    }
+
+
+@app.get("/idlez")
+async def idlez(request: Request):
+    """Idle self-report for the concierge's sweeper.
+
+    With multiple concierge replicas, no single replica's bookkeeping can
+    prove a guest is idle (another replica may be mid-chat with it). The
+    guest itself is the source of truth: requests in flight and seconds
+    since the last chat. Does NOT count as activity itself.
+    """
+    _ensure_identity(request)
+    last = state["last_activity"]
+    return {
+        "guest": state["guest"],
+        # Subtract this very request from the count — /idlez is an observer.
+        "in_flight": max(0, _in_flight - 1),
+        "idle_s": (time.monotonic() - last) if last is not None else None,
     }
 
 
@@ -155,11 +209,6 @@ async def _linger_loop() -> None:
         if last is None:
             continue
         idle = time.monotonic() - last
-        if idle >= LINGER_SECONDS and state["yield_requested_at"] < last:
+        if (idle >= LINGER_SECONDS and state["yield_requested_at"] < last
+                and _in_flight == 0):
             await _request_yield()
-
-
-@app.on_event("startup")
-async def _start_linger():
-    if LINGER_SECONDS > 0:
-        asyncio.create_task(_linger_loop())
