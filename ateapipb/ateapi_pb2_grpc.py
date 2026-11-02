@@ -5,7 +5,7 @@ import warnings
 
 from ateapipb import ateapi_pb2 as ateapipb_dot_ateapi__pb2
 
-GRPC_GENERATED_VERSION = '1.83.0'
+GRPC_GENERATED_VERSION = '1.85.1'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -36,94 +36,214 @@ class ControlStub:
             channel: A grpc.Channel.
         """
         self.GetActor = channel.unary_unary(
-                '/ateapi.Control/GetActor',
+                '/substrate.ateapi.v1.Control/GetActor',
                 request_serializer=ateapipb_dot_ateapi__pb2.GetActorRequest.SerializeToString,
                 response_deserializer=ateapipb_dot_ateapi__pb2.Actor.FromString,
                 _registered_method=True)
         self.CreateActor = channel.unary_unary(
-                '/ateapi.Control/CreateActor',
+                '/substrate.ateapi.v1.Control/CreateActor',
                 request_serializer=ateapipb_dot_ateapi__pb2.CreateActorRequest.SerializeToString,
                 response_deserializer=ateapipb_dot_ateapi__pb2.Actor.FromString,
                 _registered_method=True)
         self.UpdateActor = channel.unary_unary(
-                '/ateapi.Control/UpdateActor',
+                '/substrate.ateapi.v1.Control/UpdateActor',
                 request_serializer=ateapipb_dot_ateapi__pb2.UpdateActorRequest.SerializeToString,
-                response_deserializer=ateapipb_dot_ateapi__pb2.UpdateActorResponse.FromString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.Actor.FromString,
                 _registered_method=True)
         self.SuspendActor = channel.unary_unary(
-                '/ateapi.Control/SuspendActor',
+                '/substrate.ateapi.v1.Control/SuspendActor',
                 request_serializer=ateapipb_dot_ateapi__pb2.SuspendActorRequest.SerializeToString,
                 response_deserializer=ateapipb_dot_ateapi__pb2.SuspendActorResponse.FromString,
                 _registered_method=True)
-        self.PauseActor = channel.unary_unary(
-                '/ateapi.Control/PauseActor',
-                request_serializer=ateapipb_dot_ateapi__pb2.PauseActorRequest.SerializeToString,
-                response_deserializer=ateapipb_dot_ateapi__pb2.PauseActorResponse.FromString,
-                _registered_method=True)
         self.ResumeActor = channel.unary_unary(
-                '/ateapi.Control/ResumeActor',
+                '/substrate.ateapi.v1.Control/ResumeActor',
                 request_serializer=ateapipb_dot_ateapi__pb2.ResumeActorRequest.SerializeToString,
                 response_deserializer=ateapipb_dot_ateapi__pb2.ResumeActorResponse.FromString,
                 _registered_method=True)
+        self.RevertActor = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/RevertActor',
+                request_serializer=ateapipb_dot_ateapi__pb2.RevertActorRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.RevertActorResponse.FromString,
+                _registered_method=True)
         self.DeleteActor = channel.unary_unary(
-                '/ateapi.Control/DeleteActor',
+                '/substrate.ateapi.v1.Control/DeleteActor',
                 request_serializer=ateapipb_dot_ateapi__pb2.DeleteActorRequest.SerializeToString,
                 response_deserializer=ateapipb_dot_ateapi__pb2.Actor.FromString,
                 _registered_method=True)
-        self.GetActorSnapshot = channel.unary_unary(
-                '/ateapi.Control/GetActorSnapshot',
-                request_serializer=ateapipb_dot_ateapi__pb2.GetActorSnapshotRequest.SerializeToString,
-                response_deserializer=ateapipb_dot_ateapi__pb2.ActorSnapshot.FromString,
+        self.GetActorEgressPolicy = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/GetActorEgressPolicy',
+                request_serializer=ateapipb_dot_ateapi__pb2.GetActorEgressPolicyRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.EgressPolicy.FromString,
                 _registered_method=True)
-        self.ListActorSnapshots = channel.unary_unary(
-                '/ateapi.Control/ListActorSnapshots',
-                request_serializer=ateapipb_dot_ateapi__pb2.ListActorSnapshotsRequest.SerializeToString,
-                response_deserializer=ateapipb_dot_ateapi__pb2.ListActorSnapshotsResponse.FromString,
+        self.CreateActorEgressPolicy = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/CreateActorEgressPolicy',
+                request_serializer=ateapipb_dot_ateapi__pb2.CreateActorEgressPolicyRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.EgressPolicy.FromString,
                 _registered_method=True)
-        self.TagActorSnapshot = channel.unary_unary(
-                '/ateapi.Control/TagActorSnapshot',
-                request_serializer=ateapipb_dot_ateapi__pb2.TagActorSnapshotRequest.SerializeToString,
-                response_deserializer=ateapipb_dot_ateapi__pb2.ActorSnapshotTag.FromString,
+        self.UpdateActorEgressPolicy = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/UpdateActorEgressPolicy',
+                request_serializer=ateapipb_dot_ateapi__pb2.UpdateActorEgressPolicyRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.EgressPolicy.FromString,
                 _registered_method=True)
-        self.UpdateActorSnapshotTag = channel.unary_unary(
-                '/ateapi.Control/UpdateActorSnapshotTag',
-                request_serializer=ateapipb_dot_ateapi__pb2.UpdateActorSnapshotTagRequest.SerializeToString,
-                response_deserializer=ateapipb_dot_ateapi__pb2.ActorSnapshotTag.FromString,
+        self.DeleteActorEgressPolicy = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/DeleteActorEgressPolicy',
+                request_serializer=ateapipb_dot_ateapi__pb2.DeleteActorEgressPolicyRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.EgressPolicy.FromString,
                 _registered_method=True)
-        self.DeleteActorSnapshotTag = channel.unary_unary(
-                '/ateapi.Control/DeleteActorSnapshotTag',
-                request_serializer=ateapipb_dot_ateapi__pb2.DeleteActorSnapshotTagRequest.SerializeToString,
-                response_deserializer=ateapipb_dot_ateapi__pb2.ActorSnapshotTag.FromString,
+        self.MintActorJwt = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/MintActorJwt',
+                request_serializer=ateapipb_dot_ateapi__pb2.MintActorJwtRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.MintActorJwtResponse.FromString,
+                _registered_method=True)
+        self.CreateTag = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/CreateTag',
+                request_serializer=ateapipb_dot_ateapi__pb2.CreateTagRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.Tag.FromString,
+                _registered_method=True)
+        self.GetTag = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/GetTag',
+                request_serializer=ateapipb_dot_ateapi__pb2.GetTagRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.Tag.FromString,
+                _registered_method=True)
+        self.ListTags = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/ListTags',
+                request_serializer=ateapipb_dot_ateapi__pb2.ListTagsRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.ListTagsResponse.FromString,
+                _registered_method=True)
+        self.UpdateTag = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/UpdateTag',
+                request_serializer=ateapipb_dot_ateapi__pb2.UpdateTagRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.Tag.FromString,
+                _registered_method=True)
+        self.DeleteTag = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/DeleteTag',
+                request_serializer=ateapipb_dot_ateapi__pb2.DeleteTagRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.Tag.FromString,
                 _registered_method=True)
         self.ListWorkers = channel.unary_unary(
-                '/ateapi.Control/ListWorkers',
+                '/substrate.ateapi.v1.Control/ListWorkers',
                 request_serializer=ateapipb_dot_ateapi__pb2.ListWorkersRequest.SerializeToString,
                 response_deserializer=ateapipb_dot_ateapi__pb2.ListWorkersResponse.FromString,
                 _registered_method=True)
+        self.GetWorker = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/GetWorker',
+                request_serializer=ateapipb_dot_ateapi__pb2.GetWorkerRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.Worker.FromString,
+                _registered_method=True)
+        self.CreateWorker = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/CreateWorker',
+                request_serializer=ateapipb_dot_ateapi__pb2.CreateWorkerRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.Worker.FromString,
+                _registered_method=True)
+        self.UpdateWorker = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/UpdateWorker',
+                request_serializer=ateapipb_dot_ateapi__pb2.UpdateWorkerRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.Worker.FromString,
+                _registered_method=True)
+        self.DeleteWorker = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/DeleteWorker',
+                request_serializer=ateapipb_dot_ateapi__pb2.DeleteWorkerRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.Worker.FromString,
+                _registered_method=True)
+        self.DrainWorker = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/DrainWorker',
+                request_serializer=ateapipb_dot_ateapi__pb2.DrainWorkerRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.DrainWorkerResponse.FromString,
+                _registered_method=True)
+        self.MarkWorkerAvailable = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/MarkWorkerAvailable',
+                request_serializer=ateapipb_dot_ateapi__pb2.MarkWorkerAvailableRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.MarkWorkerAvailableResponse.FromString,
+                _registered_method=True)
+        self.MarkWorkerUnavailable = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/MarkWorkerUnavailable',
+                request_serializer=ateapipb_dot_ateapi__pb2.MarkWorkerUnavailableRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.MarkWorkerUnavailableResponse.FromString,
+                _registered_method=True)
+        self.ListWorkerActorAssignments = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/ListWorkerActorAssignments',
+                request_serializer=ateapipb_dot_ateapi__pb2.ListWorkerActorAssignmentsRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.ListWorkerActorAssignmentsResponse.FromString,
+                _registered_method=True)
         self.ListActors = channel.unary_unary(
-                '/ateapi.Control/ListActors',
+                '/substrate.ateapi.v1.Control/ListActors',
                 request_serializer=ateapipb_dot_ateapi__pb2.ListActorsRequest.SerializeToString,
                 response_deserializer=ateapipb_dot_ateapi__pb2.ListActorsResponse.FromString,
                 _registered_method=True)
         self.CreateAtespace = channel.unary_unary(
-                '/ateapi.Control/CreateAtespace',
+                '/substrate.ateapi.v1.Control/CreateAtespace',
                 request_serializer=ateapipb_dot_ateapi__pb2.CreateAtespaceRequest.SerializeToString,
                 response_deserializer=ateapipb_dot_ateapi__pb2.Atespace.FromString,
                 _registered_method=True)
         self.GetAtespace = channel.unary_unary(
-                '/ateapi.Control/GetAtespace',
+                '/substrate.ateapi.v1.Control/GetAtespace',
                 request_serializer=ateapipb_dot_ateapi__pb2.GetAtespaceRequest.SerializeToString,
                 response_deserializer=ateapipb_dot_ateapi__pb2.Atespace.FromString,
                 _registered_method=True)
         self.ListAtespaces = channel.unary_unary(
-                '/ateapi.Control/ListAtespaces',
+                '/substrate.ateapi.v1.Control/ListAtespaces',
                 request_serializer=ateapipb_dot_ateapi__pb2.ListAtespacesRequest.SerializeToString,
                 response_deserializer=ateapipb_dot_ateapi__pb2.ListAtespacesResponse.FromString,
                 _registered_method=True)
         self.DeleteAtespace = channel.unary_unary(
-                '/ateapi.Control/DeleteAtespace',
+                '/substrate.ateapi.v1.Control/DeleteAtespace',
                 request_serializer=ateapipb_dot_ateapi__pb2.DeleteAtespaceRequest.SerializeToString,
                 response_deserializer=ateapipb_dot_ateapi__pb2.Atespace.FromString,
+                _registered_method=True)
+        self.CreateActorTemplate = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/CreateActorTemplate',
+                request_serializer=ateapipb_dot_ateapi__pb2.CreateActorTemplateRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.ActorTemplate.FromString,
+                _registered_method=True)
+        self.GetActorTemplate = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/GetActorTemplate',
+                request_serializer=ateapipb_dot_ateapi__pb2.GetActorTemplateRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.ActorTemplate.FromString,
+                _registered_method=True)
+        self.ListActorTemplates = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/ListActorTemplates',
+                request_serializer=ateapipb_dot_ateapi__pb2.ListActorTemplatesRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.ListActorTemplatesResponse.FromString,
+                _registered_method=True)
+        self.DeleteActorTemplate = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/DeleteActorTemplate',
+                request_serializer=ateapipb_dot_ateapi__pb2.DeleteActorTemplateRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.ActorTemplate.FromString,
+                _registered_method=True)
+        self.GetGlobalAccessPolicy = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/GetGlobalAccessPolicy',
+                request_serializer=ateapipb_dot_ateapi__pb2.GetGlobalAccessPolicyRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.AccessPolicy.FromString,
+                _registered_method=True)
+        self.CreateGlobalAccessPolicy = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/CreateGlobalAccessPolicy',
+                request_serializer=ateapipb_dot_ateapi__pb2.CreateGlobalAccessPolicyRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.AccessPolicy.FromString,
+                _registered_method=True)
+        self.UpdateGlobalAccessPolicy = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/UpdateGlobalAccessPolicy',
+                request_serializer=ateapipb_dot_ateapi__pb2.UpdateGlobalAccessPolicyRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.AccessPolicy.FromString,
+                _registered_method=True)
+        self.GetAtespaceAccessPolicy = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/GetAtespaceAccessPolicy',
+                request_serializer=ateapipb_dot_ateapi__pb2.GetAtespaceAccessPolicyRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.AccessPolicy.FromString,
+                _registered_method=True)
+        self.CreateAtespaceAccessPolicy = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/CreateAtespaceAccessPolicy',
+                request_serializer=ateapipb_dot_ateapi__pb2.CreateAtespaceAccessPolicyRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.AccessPolicy.FromString,
+                _registered_method=True)
+        self.UpdateAtespaceAccessPolicy = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/UpdateAtespaceAccessPolicy',
+                request_serializer=ateapipb_dot_ateapi__pb2.UpdateAtespaceAccessPolicyRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.AccessPolicy.FromString,
+                _registered_method=True)
+        self.DeleteAtespaceAccessPolicy = channel.unary_unary(
+                '/substrate.ateapi.v1.Control/DeleteAtespaceAccessPolicy',
+                request_serializer=ateapipb_dot_ateapi__pb2.DeleteAtespaceAccessPolicyRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.AccessPolicy.FromString,
                 _registered_method=True)
 
 
@@ -153,14 +273,8 @@ class ControlServicer:
         raise NotImplementedError('Method not implemented!')
 
     def SuspendActor(self, request, context):
-        """Suspend a given actor to a new snapshot.
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def PauseActor(self, request, context):
-        """Pause a given actor and keep its snapshots on node VM.
+        """Suspend a given actor to a new snapshot. A running actor is checkpointed
+        on its worker. A SUSPENDED actor is returned as it is.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -173,44 +287,96 @@ class ControlServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def RevertActor(self, request, context):
+        """Revert an actor to SUSPENDED state at its durable snapshot.
+        Only crashed or running actors, or suspended actors with a node-local
+        snapshot, can be reverted. A suspended actor without a node-local snapshot
+        is already at its durable snapshot, so there is nothing to revert.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def DeleteActor(self, request, context):
-        """Delete an actor. Only suspended actors can be deleted.
+        """Delete an actor. A running actor's workload is terminated, its volumes
+        detached, and its worker released before the record is removed.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def GetActorSnapshot(self, request, context):
-        """Get an ActorSnapshot.
+    def GetActorEgressPolicy(self, request, context):
+        """Get the egress policy resource nested under an Actor.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def ListActorSnapshots(self, request, context):
-        """List ActorSnapshots.
+    def CreateActorEgressPolicy(self, request, context):
+        """Create the egress policy resource nested under an Actor.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def TagActorSnapshot(self, request, context):
-        """Add an Atespace-owned, stable name for an ActorSnapshot.
+    def UpdateActorEgressPolicy(self, request, context):
+        """Replace the egress policy resource nested under an Actor.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def UpdateActorSnapshotTag(self, request, context):
-        """Publish or unpublish an ActorSnapshot tag without changing its address.
+    def DeleteActorEgressPolicy(self, request, context):
+        """Delete the egress policy resource nested under an Actor.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def DeleteActorSnapshotTag(self, request, context):
-        """Delete an ActorSnapshot tag. The snapshot becomes garbage-collectable when
-        its final tag is deleted.
+    def MintActorJwt(self, request, context):
+        """Create a Substrate-issued JWT asserting the actor identity.
+
+        * Called by the egress gateway when actor JWT injection is configured for outbound requests.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CreateTag(self, request, context):
+        """Tag the external snapshot a suspended Actor holds. The tag gets its own
+        copy of that snapshot, so suspending or deleting the Actor afterwards
+        cannot collect it. When the Actor's latest snapshot is not uploaded yet,
+        atelet uploads it first, so the call can take as long as that upload.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetTag(self, request, context):
+        """Get a Tag.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListTags(self, request, context):
+        """List Tags.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def UpdateTag(self, request, context):
+        """Publish or unpublish a Tag without changing its address.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DeleteTag(self, request, context):
+        """Delete a Tag and the external snapshot it owns. Actors created from the
+        tag that have not yet been suspended still point at that external snapshot
+        and become unrecoverable, so do not delete a tag while such Actors exist.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -218,6 +384,74 @@ class ControlServicer:
 
     def ListWorkers(self, request, context):
         """List Workers.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetWorker(self, request, context):
+        """Get a Worker.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CreateWorker(self, request, context):
+        """Register a Worker. Called once its Pod has an IP. A Worker is registered
+        UNAVAILABLE and takes no Actors until MarkWorkerAvailable.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def UpdateWorker(self, request, context):
+        """Update observed pool state on a Worker.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DeleteWorker(self, request, context):
+        """Deregister a Worker. Does not cascade: the caller is responsible for
+        cleaning up related resources first.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DrainWorker(self, request, context):
+        """Mark a Worker as terminating so the scheduler stops routing new Actors to
+        it. Idempotent; one-way. Deliberately leaves any bound Actor alone.
+        Returns ABORTED if another write lands on the Worker first; retry.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def MarkWorkerAvailable(self, request, context):
+        """Mark an UNAVAILABLE Worker ACTIVE so the scheduler places Actors on it.
+        Idempotent. Returns FAILED_PRECONDITION for a DRAINING Worker, and ABORTED
+        if another write lands on the Worker first; retry.
+
+        Every Actor placed after this call is stamped with the Worker's epoch as
+        it stands then, so a caller raises epoch for a restarted the worker first.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def MarkWorkerUnavailable(self, request, context):
+        """Mark an ACTIVE Worker UNAVAILABLE so the scheduler stops placing Actors on
+        it, as while its Pod is not Ready. Idempotent. Leaves any bound Actor
+        alone. Returns FAILED_PRECONDITION for a DRAINING Worker, and ABORTED if
+        another write lands on the Worker first; retry.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListWorkerActorAssignments(self, request, context):
+        """List the Actors hosted by a given Worker.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -231,7 +465,7 @@ class ControlServicer:
         raise NotImplementedError('Method not implemented!')
 
     def CreateAtespace(self, request, context):
-        """Create a new Atespace. Substrate-native, stored in Redis.
+        """Create a new Atespace. Substrate-native, stored in database.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -253,7 +487,87 @@ class ControlServicer:
 
     def DeleteAtespace(self, request, context):
         """Delete an empty Atespace. Rejects (FailedPrecondition) if any Actors or
-        ActorSnapshotTags remain.
+        Tags remain.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CreateActorTemplate(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetActorTemplate(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListActorTemplates(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DeleteActorTemplate(self, request, context):
+        """Delete an ActorTemplate together with its golden actor and golden
+        tag in the template's atespace.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetGlobalAccessPolicy(self, request, context):
+        """Get the deployment-wide global access policy singleton. Returns NotFound
+        until the policy has been created.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CreateGlobalAccessPolicy(self, request, context):
+        """Create the deployment-wide global access policy singleton. The server's
+        configured bootstrap owners are global owners whether or not this policy
+        exists, so they can create it.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def UpdateGlobalAccessPolicy(self, request, context):
+        """Replace the deployment-wide global access policy singleton. Empty
+        bindings revoke every grant held through the policy; bootstrap owners
+        keep access.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetAtespaceAccessPolicy(self, request, context):
+        """Get the access policy resource nested under an Atespace.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CreateAtespaceAccessPolicy(self, request, context):
+        """Create the access policy resource nested under an Atespace.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def UpdateAtespaceAccessPolicy(self, request, context):
+        """Replace the access policy resource nested under an Atespace.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DeleteAtespaceAccessPolicy(self, request, context):
+        """Delete the access policy resource nested under an Atespace.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -275,57 +589,122 @@ def add_ControlServicer_to_server(servicer, server):
             'UpdateActor': grpc.unary_unary_rpc_method_handler(
                     servicer.UpdateActor,
                     request_deserializer=ateapipb_dot_ateapi__pb2.UpdateActorRequest.FromString,
-                    response_serializer=ateapipb_dot_ateapi__pb2.UpdateActorResponse.SerializeToString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.Actor.SerializeToString,
             ),
             'SuspendActor': grpc.unary_unary_rpc_method_handler(
                     servicer.SuspendActor,
                     request_deserializer=ateapipb_dot_ateapi__pb2.SuspendActorRequest.FromString,
                     response_serializer=ateapipb_dot_ateapi__pb2.SuspendActorResponse.SerializeToString,
             ),
-            'PauseActor': grpc.unary_unary_rpc_method_handler(
-                    servicer.PauseActor,
-                    request_deserializer=ateapipb_dot_ateapi__pb2.PauseActorRequest.FromString,
-                    response_serializer=ateapipb_dot_ateapi__pb2.PauseActorResponse.SerializeToString,
-            ),
             'ResumeActor': grpc.unary_unary_rpc_method_handler(
                     servicer.ResumeActor,
                     request_deserializer=ateapipb_dot_ateapi__pb2.ResumeActorRequest.FromString,
                     response_serializer=ateapipb_dot_ateapi__pb2.ResumeActorResponse.SerializeToString,
+            ),
+            'RevertActor': grpc.unary_unary_rpc_method_handler(
+                    servicer.RevertActor,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.RevertActorRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.RevertActorResponse.SerializeToString,
             ),
             'DeleteActor': grpc.unary_unary_rpc_method_handler(
                     servicer.DeleteActor,
                     request_deserializer=ateapipb_dot_ateapi__pb2.DeleteActorRequest.FromString,
                     response_serializer=ateapipb_dot_ateapi__pb2.Actor.SerializeToString,
             ),
-            'GetActorSnapshot': grpc.unary_unary_rpc_method_handler(
-                    servicer.GetActorSnapshot,
-                    request_deserializer=ateapipb_dot_ateapi__pb2.GetActorSnapshotRequest.FromString,
-                    response_serializer=ateapipb_dot_ateapi__pb2.ActorSnapshot.SerializeToString,
+            'GetActorEgressPolicy': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetActorEgressPolicy,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.GetActorEgressPolicyRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.EgressPolicy.SerializeToString,
             ),
-            'ListActorSnapshots': grpc.unary_unary_rpc_method_handler(
-                    servicer.ListActorSnapshots,
-                    request_deserializer=ateapipb_dot_ateapi__pb2.ListActorSnapshotsRequest.FromString,
-                    response_serializer=ateapipb_dot_ateapi__pb2.ListActorSnapshotsResponse.SerializeToString,
+            'CreateActorEgressPolicy': grpc.unary_unary_rpc_method_handler(
+                    servicer.CreateActorEgressPolicy,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.CreateActorEgressPolicyRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.EgressPolicy.SerializeToString,
             ),
-            'TagActorSnapshot': grpc.unary_unary_rpc_method_handler(
-                    servicer.TagActorSnapshot,
-                    request_deserializer=ateapipb_dot_ateapi__pb2.TagActorSnapshotRequest.FromString,
-                    response_serializer=ateapipb_dot_ateapi__pb2.ActorSnapshotTag.SerializeToString,
+            'UpdateActorEgressPolicy': grpc.unary_unary_rpc_method_handler(
+                    servicer.UpdateActorEgressPolicy,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.UpdateActorEgressPolicyRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.EgressPolicy.SerializeToString,
             ),
-            'UpdateActorSnapshotTag': grpc.unary_unary_rpc_method_handler(
-                    servicer.UpdateActorSnapshotTag,
-                    request_deserializer=ateapipb_dot_ateapi__pb2.UpdateActorSnapshotTagRequest.FromString,
-                    response_serializer=ateapipb_dot_ateapi__pb2.ActorSnapshotTag.SerializeToString,
+            'DeleteActorEgressPolicy': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeleteActorEgressPolicy,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.DeleteActorEgressPolicyRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.EgressPolicy.SerializeToString,
             ),
-            'DeleteActorSnapshotTag': grpc.unary_unary_rpc_method_handler(
-                    servicer.DeleteActorSnapshotTag,
-                    request_deserializer=ateapipb_dot_ateapi__pb2.DeleteActorSnapshotTagRequest.FromString,
-                    response_serializer=ateapipb_dot_ateapi__pb2.ActorSnapshotTag.SerializeToString,
+            'MintActorJwt': grpc.unary_unary_rpc_method_handler(
+                    servicer.MintActorJwt,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.MintActorJwtRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.MintActorJwtResponse.SerializeToString,
+            ),
+            'CreateTag': grpc.unary_unary_rpc_method_handler(
+                    servicer.CreateTag,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.CreateTagRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.Tag.SerializeToString,
+            ),
+            'GetTag': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetTag,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.GetTagRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.Tag.SerializeToString,
+            ),
+            'ListTags': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListTags,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.ListTagsRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.ListTagsResponse.SerializeToString,
+            ),
+            'UpdateTag': grpc.unary_unary_rpc_method_handler(
+                    servicer.UpdateTag,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.UpdateTagRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.Tag.SerializeToString,
+            ),
+            'DeleteTag': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeleteTag,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.DeleteTagRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.Tag.SerializeToString,
             ),
             'ListWorkers': grpc.unary_unary_rpc_method_handler(
                     servicer.ListWorkers,
                     request_deserializer=ateapipb_dot_ateapi__pb2.ListWorkersRequest.FromString,
                     response_serializer=ateapipb_dot_ateapi__pb2.ListWorkersResponse.SerializeToString,
+            ),
+            'GetWorker': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetWorker,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.GetWorkerRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.Worker.SerializeToString,
+            ),
+            'CreateWorker': grpc.unary_unary_rpc_method_handler(
+                    servicer.CreateWorker,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.CreateWorkerRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.Worker.SerializeToString,
+            ),
+            'UpdateWorker': grpc.unary_unary_rpc_method_handler(
+                    servicer.UpdateWorker,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.UpdateWorkerRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.Worker.SerializeToString,
+            ),
+            'DeleteWorker': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeleteWorker,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.DeleteWorkerRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.Worker.SerializeToString,
+            ),
+            'DrainWorker': grpc.unary_unary_rpc_method_handler(
+                    servicer.DrainWorker,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.DrainWorkerRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.DrainWorkerResponse.SerializeToString,
+            ),
+            'MarkWorkerAvailable': grpc.unary_unary_rpc_method_handler(
+                    servicer.MarkWorkerAvailable,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.MarkWorkerAvailableRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.MarkWorkerAvailableResponse.SerializeToString,
+            ),
+            'MarkWorkerUnavailable': grpc.unary_unary_rpc_method_handler(
+                    servicer.MarkWorkerUnavailable,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.MarkWorkerUnavailableRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.MarkWorkerUnavailableResponse.SerializeToString,
+            ),
+            'ListWorkerActorAssignments': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListWorkerActorAssignments,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.ListWorkerActorAssignmentsRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.ListWorkerActorAssignmentsResponse.SerializeToString,
             ),
             'ListActors': grpc.unary_unary_rpc_method_handler(
                     servicer.ListActors,
@@ -352,11 +731,66 @@ def add_ControlServicer_to_server(servicer, server):
                     request_deserializer=ateapipb_dot_ateapi__pb2.DeleteAtespaceRequest.FromString,
                     response_serializer=ateapipb_dot_ateapi__pb2.Atespace.SerializeToString,
             ),
+            'CreateActorTemplate': grpc.unary_unary_rpc_method_handler(
+                    servicer.CreateActorTemplate,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.CreateActorTemplateRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.ActorTemplate.SerializeToString,
+            ),
+            'GetActorTemplate': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetActorTemplate,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.GetActorTemplateRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.ActorTemplate.SerializeToString,
+            ),
+            'ListActorTemplates': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListActorTemplates,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.ListActorTemplatesRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.ListActorTemplatesResponse.SerializeToString,
+            ),
+            'DeleteActorTemplate': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeleteActorTemplate,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.DeleteActorTemplateRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.ActorTemplate.SerializeToString,
+            ),
+            'GetGlobalAccessPolicy': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetGlobalAccessPolicy,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.GetGlobalAccessPolicyRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.AccessPolicy.SerializeToString,
+            ),
+            'CreateGlobalAccessPolicy': grpc.unary_unary_rpc_method_handler(
+                    servicer.CreateGlobalAccessPolicy,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.CreateGlobalAccessPolicyRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.AccessPolicy.SerializeToString,
+            ),
+            'UpdateGlobalAccessPolicy': grpc.unary_unary_rpc_method_handler(
+                    servicer.UpdateGlobalAccessPolicy,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.UpdateGlobalAccessPolicyRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.AccessPolicy.SerializeToString,
+            ),
+            'GetAtespaceAccessPolicy': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetAtespaceAccessPolicy,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.GetAtespaceAccessPolicyRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.AccessPolicy.SerializeToString,
+            ),
+            'CreateAtespaceAccessPolicy': grpc.unary_unary_rpc_method_handler(
+                    servicer.CreateAtespaceAccessPolicy,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.CreateAtespaceAccessPolicyRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.AccessPolicy.SerializeToString,
+            ),
+            'UpdateAtespaceAccessPolicy': grpc.unary_unary_rpc_method_handler(
+                    servicer.UpdateAtespaceAccessPolicy,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.UpdateAtespaceAccessPolicyRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.AccessPolicy.SerializeToString,
+            ),
+            'DeleteAtespaceAccessPolicy': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeleteAtespaceAccessPolicy,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.DeleteAtespaceAccessPolicyRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.AccessPolicy.SerializeToString,
+            ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'ateapi.Control', rpc_method_handlers)
+            'substrate.ateapi.v1.Control', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers('ateapi.Control', rpc_method_handlers)
+    server.add_registered_method_handlers('substrate.ateapi.v1.Control', rpc_method_handlers)
 
 
  # This class is part of an EXPERIMENTAL API.
@@ -378,7 +812,7 @@ class Control:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/ateapi.Control/GetActor',
+            '/substrate.ateapi.v1.Control/GetActor',
             ateapipb_dot_ateapi__pb2.GetActorRequest.SerializeToString,
             ateapipb_dot_ateapi__pb2.Actor.FromString,
             options,
@@ -405,7 +839,7 @@ class Control:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/ateapi.Control/CreateActor',
+            '/substrate.ateapi.v1.Control/CreateActor',
             ateapipb_dot_ateapi__pb2.CreateActorRequest.SerializeToString,
             ateapipb_dot_ateapi__pb2.Actor.FromString,
             options,
@@ -432,9 +866,9 @@ class Control:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/ateapi.Control/UpdateActor',
+            '/substrate.ateapi.v1.Control/UpdateActor',
             ateapipb_dot_ateapi__pb2.UpdateActorRequest.SerializeToString,
-            ateapipb_dot_ateapi__pb2.UpdateActorResponse.FromString,
+            ateapipb_dot_ateapi__pb2.Actor.FromString,
             options,
             channel_credentials,
             insecure,
@@ -459,36 +893,9 @@ class Control:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/ateapi.Control/SuspendActor',
+            '/substrate.ateapi.v1.Control/SuspendActor',
             ateapipb_dot_ateapi__pb2.SuspendActorRequest.SerializeToString,
             ateapipb_dot_ateapi__pb2.SuspendActorResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def PauseActor(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/ateapi.Control/PauseActor',
-            ateapipb_dot_ateapi__pb2.PauseActorRequest.SerializeToString,
-            ateapipb_dot_ateapi__pb2.PauseActorResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -513,9 +920,36 @@ class Control:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/ateapi.Control/ResumeActor',
+            '/substrate.ateapi.v1.Control/ResumeActor',
             ateapipb_dot_ateapi__pb2.ResumeActorRequest.SerializeToString,
             ateapipb_dot_ateapi__pb2.ResumeActorResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RevertActor(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.Control/RevertActor',
+            ateapipb_dot_ateapi__pb2.RevertActorRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.RevertActorResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -540,7 +974,7 @@ class Control:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/ateapi.Control/DeleteActor',
+            '/substrate.ateapi.v1.Control/DeleteActor',
             ateapipb_dot_ateapi__pb2.DeleteActorRequest.SerializeToString,
             ateapipb_dot_ateapi__pb2.Actor.FromString,
             options,
@@ -554,7 +988,7 @@ class Control:
             _registered_method=True)
 
     @staticmethod
-    def GetActorSnapshot(request,
+    def GetActorEgressPolicy(request,
             target,
             options=(),
             channel_credentials=None,
@@ -567,9 +1001,9 @@ class Control:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/ateapi.Control/GetActorSnapshot',
-            ateapipb_dot_ateapi__pb2.GetActorSnapshotRequest.SerializeToString,
-            ateapipb_dot_ateapi__pb2.ActorSnapshot.FromString,
+            '/substrate.ateapi.v1.Control/GetActorEgressPolicy',
+            ateapipb_dot_ateapi__pb2.GetActorEgressPolicyRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.EgressPolicy.FromString,
             options,
             channel_credentials,
             insecure,
@@ -581,7 +1015,7 @@ class Control:
             _registered_method=True)
 
     @staticmethod
-    def ListActorSnapshots(request,
+    def CreateActorEgressPolicy(request,
             target,
             options=(),
             channel_credentials=None,
@@ -594,9 +1028,9 @@ class Control:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/ateapi.Control/ListActorSnapshots',
-            ateapipb_dot_ateapi__pb2.ListActorSnapshotsRequest.SerializeToString,
-            ateapipb_dot_ateapi__pb2.ListActorSnapshotsResponse.FromString,
+            '/substrate.ateapi.v1.Control/CreateActorEgressPolicy',
+            ateapipb_dot_ateapi__pb2.CreateActorEgressPolicyRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.EgressPolicy.FromString,
             options,
             channel_credentials,
             insecure,
@@ -608,7 +1042,7 @@ class Control:
             _registered_method=True)
 
     @staticmethod
-    def TagActorSnapshot(request,
+    def UpdateActorEgressPolicy(request,
             target,
             options=(),
             channel_credentials=None,
@@ -621,9 +1055,9 @@ class Control:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/ateapi.Control/TagActorSnapshot',
-            ateapipb_dot_ateapi__pb2.TagActorSnapshotRequest.SerializeToString,
-            ateapipb_dot_ateapi__pb2.ActorSnapshotTag.FromString,
+            '/substrate.ateapi.v1.Control/UpdateActorEgressPolicy',
+            ateapipb_dot_ateapi__pb2.UpdateActorEgressPolicyRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.EgressPolicy.FromString,
             options,
             channel_credentials,
             insecure,
@@ -635,7 +1069,7 @@ class Control:
             _registered_method=True)
 
     @staticmethod
-    def UpdateActorSnapshotTag(request,
+    def DeleteActorEgressPolicy(request,
             target,
             options=(),
             channel_credentials=None,
@@ -648,9 +1082,9 @@ class Control:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/ateapi.Control/UpdateActorSnapshotTag',
-            ateapipb_dot_ateapi__pb2.UpdateActorSnapshotTagRequest.SerializeToString,
-            ateapipb_dot_ateapi__pb2.ActorSnapshotTag.FromString,
+            '/substrate.ateapi.v1.Control/DeleteActorEgressPolicy',
+            ateapipb_dot_ateapi__pb2.DeleteActorEgressPolicyRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.EgressPolicy.FromString,
             options,
             channel_credentials,
             insecure,
@@ -662,7 +1096,7 @@ class Control:
             _registered_method=True)
 
     @staticmethod
-    def DeleteActorSnapshotTag(request,
+    def MintActorJwt(request,
             target,
             options=(),
             channel_credentials=None,
@@ -675,9 +1109,144 @@ class Control:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/ateapi.Control/DeleteActorSnapshotTag',
-            ateapipb_dot_ateapi__pb2.DeleteActorSnapshotTagRequest.SerializeToString,
-            ateapipb_dot_ateapi__pb2.ActorSnapshotTag.FromString,
+            '/substrate.ateapi.v1.Control/MintActorJwt',
+            ateapipb_dot_ateapi__pb2.MintActorJwtRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.MintActorJwtResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CreateTag(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.Control/CreateTag',
+            ateapipb_dot_ateapi__pb2.CreateTagRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.Tag.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetTag(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.Control/GetTag',
+            ateapipb_dot_ateapi__pb2.GetTagRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.Tag.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListTags(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.Control/ListTags',
+            ateapipb_dot_ateapi__pb2.ListTagsRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.ListTagsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def UpdateTag(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.Control/UpdateTag',
+            ateapipb_dot_ateapi__pb2.UpdateTagRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.Tag.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DeleteTag(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.Control/DeleteTag',
+            ateapipb_dot_ateapi__pb2.DeleteTagRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.Tag.FromString,
             options,
             channel_credentials,
             insecure,
@@ -702,9 +1271,225 @@ class Control:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/ateapi.Control/ListWorkers',
+            '/substrate.ateapi.v1.Control/ListWorkers',
             ateapipb_dot_ateapi__pb2.ListWorkersRequest.SerializeToString,
             ateapipb_dot_ateapi__pb2.ListWorkersResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetWorker(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.Control/GetWorker',
+            ateapipb_dot_ateapi__pb2.GetWorkerRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.Worker.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CreateWorker(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.Control/CreateWorker',
+            ateapipb_dot_ateapi__pb2.CreateWorkerRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.Worker.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def UpdateWorker(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.Control/UpdateWorker',
+            ateapipb_dot_ateapi__pb2.UpdateWorkerRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.Worker.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DeleteWorker(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.Control/DeleteWorker',
+            ateapipb_dot_ateapi__pb2.DeleteWorkerRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.Worker.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DrainWorker(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.Control/DrainWorker',
+            ateapipb_dot_ateapi__pb2.DrainWorkerRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.DrainWorkerResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def MarkWorkerAvailable(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.Control/MarkWorkerAvailable',
+            ateapipb_dot_ateapi__pb2.MarkWorkerAvailableRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.MarkWorkerAvailableResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def MarkWorkerUnavailable(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.Control/MarkWorkerUnavailable',
+            ateapipb_dot_ateapi__pb2.MarkWorkerUnavailableRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.MarkWorkerUnavailableResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListWorkerActorAssignments(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.Control/ListWorkerActorAssignments',
+            ateapipb_dot_ateapi__pb2.ListWorkerActorAssignmentsRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.ListWorkerActorAssignmentsResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -729,7 +1514,7 @@ class Control:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/ateapi.Control/ListActors',
+            '/substrate.ateapi.v1.Control/ListActors',
             ateapipb_dot_ateapi__pb2.ListActorsRequest.SerializeToString,
             ateapipb_dot_ateapi__pb2.ListActorsResponse.FromString,
             options,
@@ -756,7 +1541,7 @@ class Control:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/ateapi.Control/CreateAtespace',
+            '/substrate.ateapi.v1.Control/CreateAtespace',
             ateapipb_dot_ateapi__pb2.CreateAtespaceRequest.SerializeToString,
             ateapipb_dot_ateapi__pb2.Atespace.FromString,
             options,
@@ -783,7 +1568,7 @@ class Control:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/ateapi.Control/GetAtespace',
+            '/substrate.ateapi.v1.Control/GetAtespace',
             ateapipb_dot_ateapi__pb2.GetAtespaceRequest.SerializeToString,
             ateapipb_dot_ateapi__pb2.Atespace.FromString,
             options,
@@ -810,7 +1595,7 @@ class Control:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/ateapi.Control/ListAtespaces',
+            '/substrate.ateapi.v1.Control/ListAtespaces',
             ateapipb_dot_ateapi__pb2.ListAtespacesRequest.SerializeToString,
             ateapipb_dot_ateapi__pb2.ListAtespacesResponse.FromString,
             options,
@@ -837,7 +1622,7 @@ class Control:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/ateapi.Control/DeleteAtespace',
+            '/substrate.ateapi.v1.Control/DeleteAtespace',
             ateapipb_dot_ateapi__pb2.DeleteAtespaceRequest.SerializeToString,
             ateapipb_dot_ateapi__pb2.Atespace.FromString,
             options,
@@ -850,60 +1635,8 @@ class Control:
             metadata,
             _registered_method=True)
 
-
-class DebugStub:
-    """Debug is the RPC interface for administrative and debugging operations
-    (such as wiping state during development).
-    """
-
-    def __init__(self, channel):
-        """Constructor.
-
-        Args:
-            channel: A grpc.Channel.
-        """
-        self.DebugClear = channel.unary_unary(
-                '/ateapi.Debug/DebugClear',
-                request_serializer=ateapipb_dot_ateapi__pb2.DebugClearRequest.SerializeToString,
-                response_deserializer=ateapipb_dot_ateapi__pb2.DebugClearResponse.FromString,
-                _registered_method=True)
-
-
-class DebugServicer:
-    """Debug is the RPC interface for administrative and debugging operations
-    (such as wiping state during development).
-    """
-
-    def DebugClear(self, request, context):
-        """Debugging: drop all data from the ate database.
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-
-def add_DebugServicer_to_server(servicer, server):
-    rpc_method_handlers = {
-            'DebugClear': grpc.unary_unary_rpc_method_handler(
-                    servicer.DebugClear,
-                    request_deserializer=ateapipb_dot_ateapi__pb2.DebugClearRequest.FromString,
-                    response_serializer=ateapipb_dot_ateapi__pb2.DebugClearResponse.SerializeToString,
-            ),
-    }
-    generic_handler = grpc.method_handlers_generic_handler(
-            'ateapi.Debug', rpc_method_handlers)
-    server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers('ateapi.Debug', rpc_method_handlers)
-
-
- # This class is part of an EXPERIMENTAL API.
-class Debug:
-    """Debug is the RPC interface for administrative and debugging operations
-    (such as wiping state during development).
-    """
-
     @staticmethod
-    def DebugClear(request,
+    def CreateActorTemplate(request,
             target,
             options=(),
             channel_credentials=None,
@@ -916,161 +1649,9 @@ class Debug:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/ateapi.Debug/DebugClear',
-            ateapipb_dot_ateapi__pb2.DebugClearRequest.SerializeToString,
-            ateapipb_dot_ateapi__pb2.DebugClearResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-
-class ActorIdentityStub:
-    """ActorIdentity allows substrate workloads to exchange their
-    infrastructure-level credentials (k8s service account token, etc.) for a
-    substrate actor-level credential.  A given substrate actor might migrate
-    between many different physical workers over the course of its lifecycle,
-    whereas the actor credential's identity will be stable for the life of the
-    actor.
-
-    This service requires authentication. You can authenticate with a Kubernetes
-    service account token in an `Authorization: Bearer` header, or you can
-    authenticate with a Kubernetes service account certificate as an mTLS
-    certificate. (Kubernetes service account certificates do not currently exist
-    upstream, but we will provide a polyfill based on Pod Certificates).
-
-    The broker will check that the service credentials you authenticated with
-    belong to a Pod that is currently mapped to the requested actor in the
-    actor database.
-    """
-
-    def __init__(self, channel):
-        """Constructor.
-
-        Args:
-            channel: A grpc.Channel.
-        """
-        self.MintJWT = channel.unary_unary(
-                '/ateapi.ActorIdentity/MintJWT',
-                request_serializer=ateapipb_dot_ateapi__pb2.MintJWTRequest.SerializeToString,
-                response_deserializer=ateapipb_dot_ateapi__pb2.MintJWTResponse.FromString,
-                _registered_method=True)
-        self.MintCert = channel.unary_unary(
-                '/ateapi.ActorIdentity/MintCert',
-                request_serializer=ateapipb_dot_ateapi__pb2.MintCertRequest.SerializeToString,
-                response_deserializer=ateapipb_dot_ateapi__pb2.MintCertResponse.FromString,
-                _registered_method=True)
-
-
-class ActorIdentityServicer:
-    """ActorIdentity allows substrate workloads to exchange their
-    infrastructure-level credentials (k8s service account token, etc.) for a
-    substrate actor-level credential.  A given substrate actor might migrate
-    between many different physical workers over the course of its lifecycle,
-    whereas the actor credential's identity will be stable for the life of the
-    actor.
-
-    This service requires authentication. You can authenticate with a Kubernetes
-    service account token in an `Authorization: Bearer` header, or you can
-    authenticate with a Kubernetes service account certificate as an mTLS
-    certificate. (Kubernetes service account certificates do not currently exist
-    upstream, but we will provide a polyfill based on Pod Certificates).
-
-    The broker will check that the service credentials you authenticated with
-    belong to a Pod that is currently mapped to the requested actor in the
-    actor database.
-    """
-
-    def MintJWT(self, request, context):
-        """Request an Actor Identity JWT.
-
-        To call this RPC, you must be authenticated as the Kubernetes Pod that is
-        currently running the requested actor.
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def MintCert(self, request, context):
-        """Request an Actor Identity Certificate for an actor.
-
-        Actors do not call this RPC themselves. The atelet hosting the actor calls
-        it on the actor's behalf, authenticating with its own client certificate
-        rather than a bearer token.
-
-        Authorization is decided on that client certificate: it must identify the
-        atelet running on the same node as the worker Pod that currently hosts the
-        requested actor, and the actor must still be running. Any other caller is
-        rejected with PERMISSION_DENIED.
-
-        The certificate in the response is the actor's identity, not the atelet's.
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-
-def add_ActorIdentityServicer_to_server(servicer, server):
-    rpc_method_handlers = {
-            'MintJWT': grpc.unary_unary_rpc_method_handler(
-                    servicer.MintJWT,
-                    request_deserializer=ateapipb_dot_ateapi__pb2.MintJWTRequest.FromString,
-                    response_serializer=ateapipb_dot_ateapi__pb2.MintJWTResponse.SerializeToString,
-            ),
-            'MintCert': grpc.unary_unary_rpc_method_handler(
-                    servicer.MintCert,
-                    request_deserializer=ateapipb_dot_ateapi__pb2.MintCertRequest.FromString,
-                    response_serializer=ateapipb_dot_ateapi__pb2.MintCertResponse.SerializeToString,
-            ),
-    }
-    generic_handler = grpc.method_handlers_generic_handler(
-            'ateapi.ActorIdentity', rpc_method_handlers)
-    server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers('ateapi.ActorIdentity', rpc_method_handlers)
-
-
- # This class is part of an EXPERIMENTAL API.
-class ActorIdentity:
-    """ActorIdentity allows substrate workloads to exchange their
-    infrastructure-level credentials (k8s service account token, etc.) for a
-    substrate actor-level credential.  A given substrate actor might migrate
-    between many different physical workers over the course of its lifecycle,
-    whereas the actor credential's identity will be stable for the life of the
-    actor.
-
-    This service requires authentication. You can authenticate with a Kubernetes
-    service account token in an `Authorization: Bearer` header, or you can
-    authenticate with a Kubernetes service account certificate as an mTLS
-    certificate. (Kubernetes service account certificates do not currently exist
-    upstream, but we will provide a polyfill based on Pod Certificates).
-
-    The broker will check that the service credentials you authenticated with
-    belong to a Pod that is currently mapped to the requested actor in the
-    actor database.
-    """
-
-    @staticmethod
-    def MintJWT(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/ateapi.ActorIdentity/MintJWT',
-            ateapipb_dot_ateapi__pb2.MintJWTRequest.SerializeToString,
-            ateapipb_dot_ateapi__pb2.MintJWTResponse.FromString,
+            '/substrate.ateapi.v1.Control/CreateActorTemplate',
+            ateapipb_dot_ateapi__pb2.CreateActorTemplateRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.ActorTemplate.FromString,
             options,
             channel_credentials,
             insecure,
@@ -1082,7 +1663,7 @@ class ActorIdentity:
             _registered_method=True)
 
     @staticmethod
-    def MintCert(request,
+    def GetActorTemplate(request,
             target,
             options=(),
             channel_credentials=None,
@@ -1095,9 +1676,728 @@ class ActorIdentity:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/ateapi.ActorIdentity/MintCert',
-            ateapipb_dot_ateapi__pb2.MintCertRequest.SerializeToString,
-            ateapipb_dot_ateapi__pb2.MintCertResponse.FromString,
+            '/substrate.ateapi.v1.Control/GetActorTemplate',
+            ateapipb_dot_ateapi__pb2.GetActorTemplateRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.ActorTemplate.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListActorTemplates(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.Control/ListActorTemplates',
+            ateapipb_dot_ateapi__pb2.ListActorTemplatesRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.ListActorTemplatesResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DeleteActorTemplate(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.Control/DeleteActorTemplate',
+            ateapipb_dot_ateapi__pb2.DeleteActorTemplateRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.ActorTemplate.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetGlobalAccessPolicy(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.Control/GetGlobalAccessPolicy',
+            ateapipb_dot_ateapi__pb2.GetGlobalAccessPolicyRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.AccessPolicy.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CreateGlobalAccessPolicy(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.Control/CreateGlobalAccessPolicy',
+            ateapipb_dot_ateapi__pb2.CreateGlobalAccessPolicyRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.AccessPolicy.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def UpdateGlobalAccessPolicy(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.Control/UpdateGlobalAccessPolicy',
+            ateapipb_dot_ateapi__pb2.UpdateGlobalAccessPolicyRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.AccessPolicy.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetAtespaceAccessPolicy(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.Control/GetAtespaceAccessPolicy',
+            ateapipb_dot_ateapi__pb2.GetAtespaceAccessPolicyRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.AccessPolicy.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CreateAtespaceAccessPolicy(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.Control/CreateAtespaceAccessPolicy',
+            ateapipb_dot_ateapi__pb2.CreateAtespaceAccessPolicyRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.AccessPolicy.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def UpdateAtespaceAccessPolicy(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.Control/UpdateAtespaceAccessPolicy',
+            ateapipb_dot_ateapi__pb2.UpdateAtespaceAccessPolicyRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.AccessPolicy.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DeleteAtespaceAccessPolicy(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.Control/DeleteAtespaceAccessPolicy',
+            ateapipb_dot_ateapi__pb2.DeleteAtespaceAccessPolicyRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.AccessPolicy.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+
+class WorkerServiceStub:
+    """WorkerService is how a Worker tells the control plane what it observes. It is
+    separate from Control because the two have different callers and different
+    authorization: Control is the client-facing API, while these RPCs are served
+    only to an atelet, and only for the Workers on its own node.
+    """
+
+    def __init__(self, channel):
+        """Constructor.
+
+        Args:
+            channel: A grpc.Channel.
+        """
+        self.AcquireWorkerEpoch = channel.unary_unary(
+                '/substrate.ateapi.v1.WorkerService/AcquireWorkerEpoch',
+                request_serializer=ateapipb_dot_ateapi__pb2.AcquireWorkerEpochRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.AcquireWorkerEpochResponse.FromString,
+                _registered_method=True)
+        self.RegisterWorker = channel.unary_unary(
+                '/substrate.ateapi.v1.WorkerService/RegisterWorker',
+                request_serializer=ateapipb_dot_ateapi__pb2.RegisterWorkerRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.RegisterWorkerResponse.FromString,
+                _registered_method=True)
+        self.SetWorkerSandboxRuntimes = channel.unary_unary(
+                '/substrate.ateapi.v1.WorkerService/SetWorkerSandboxRuntimes',
+                request_serializer=ateapipb_dot_ateapi__pb2.SetWorkerSandboxRuntimesRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.SetWorkerSandboxRuntimesResponse.FromString,
+                _registered_method=True)
+        self.MintWorkerActorCertificate = channel.unary_unary(
+                '/substrate.ateapi.v1.WorkerService/MintWorkerActorCertificate',
+                request_serializer=ateapipb_dot_ateapi__pb2.MintWorkerActorCertificateRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.MintWorkerActorCertificateResponse.FromString,
+                _registered_method=True)
+        self.MintWorkerActorJwt = channel.unary_unary(
+                '/substrate.ateapi.v1.WorkerService/MintWorkerActorJwt',
+                request_serializer=ateapipb_dot_ateapi__pb2.MintWorkerActorJwtRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.MintWorkerActorJwtResponse.FromString,
+                _registered_method=True)
+        self.RequestActorSuspend = channel.unary_unary(
+                '/substrate.ateapi.v1.WorkerService/RequestActorSuspend',
+                request_serializer=ateapipb_dot_ateapi__pb2.RequestActorSuspendRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.RequestActorSuspendResponse.FromString,
+                _registered_method=True)
+        self.ReportActorSnapshotState = channel.unary_unary(
+                '/substrate.ateapi.v1.WorkerService/ReportActorSnapshotState',
+                request_serializer=ateapipb_dot_ateapi__pb2.ReportActorSnapshotStateRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.ReportActorSnapshotStateResponse.FromString,
+                _registered_method=True)
+        self.ReportActorCrashed = channel.unary_unary(
+                '/substrate.ateapi.v1.WorkerService/ReportActorCrashed',
+                request_serializer=ateapipb_dot_ateapi__pb2.ReportActorCrashedRequest.SerializeToString,
+                response_deserializer=ateapipb_dot_ateapi__pb2.ReportActorCrashedResponse.FromString,
+                _registered_method=True)
+
+
+class WorkerServiceServicer:
+    """WorkerService is how a Worker tells the control plane what it observes. It is
+    separate from Control because the two have different callers and different
+    authorization: Control is the client-facing API, while these RPCs are served
+    only to an atelet, and only for the Workers on its own node.
+    """
+
+    def AcquireWorkerEpoch(self, request, context):
+        """AcquireWorkerEpoch hands out a new epoch for a worker process, the first
+        step of its startup. Nothing becomes active until the process registers
+        with the epoch through RegisterWorker, so an acquire from a process that
+        exits before it sees the reply changes nothing the scheduler or the
+        reconciler acts on.
+
+        atelet calls this with its own client certificate, for a Worker on its own
+        node. Not idempotent: each call hands out a new epoch.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RegisterWorker(self, request, context):
+        """RegisterWorker activates the epoch a worker process acquired and records
+        its pod IPs and capacity, in one write. A worker process registers once.
+        The epoch must be one AcquireWorkerEpoch handed out, and higher than the
+        Worker's registered_epoch; once it is registered, the Actors that ran under
+        an earlier epoch are crashed, and the Worker takes no Actors until the new
+        worker process reports its sandbox runtimes. Capacity and IPs are the Worker's to report:
+        only its node can observe them.
+
+        atelet calls this with its own client certificate, as it does for
+        MintCert. Re-sending the registered epoch with the same IPs and capacity is
+        not a write. An older epoch, one that was never handed out, or the
+        registered epoch with other IPs or capacity gets FailedPrecondition: an epoch's
+        registration does not change once made.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SetWorkerSandboxRuntimes(self, request, context):
+        """SetWorkerSandboxRuntimes records the sandbox runtimes a registered worker
+        process can run. A worker process reports them after it registers, and
+        again whenever they change. The epoch must be the Worker's registered_epoch,
+        so a report from a worker process that has since been replaced gets
+        FailedPrecondition, as does an entry of another class than the one this
+        worker process reported first.
+
+        atelet calls this with its own client certificate. Re-sending the same
+        runtimes is not a write.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def MintWorkerActorCertificate(self, request, context):
+        """Create a Substrate-issued SPIFFE certificate that asserts a worker acting
+        on behalf of a particular actor.
+
+        SPIFFE URI: spiffe://${trustdomain}/worker-for-actor/${atespace}/${actor}
+
+        atelet calls this with its own client certificate, as it does for
+        RequestActorSuspend, naming the Worker its caller proved itself to be.
+        The control plane mints only for the Worker that the Actor is assigned
+        to, and only to an atelet on that Worker's node. A request from any
+        other node or Worker gets NotFound; one from the assigned Worker with a
+        stale actor_uid gets Aborted. Unlike MintWorkerActorJwt, a SUSPENDED Actor
+        gets NotFound, since it has no Worker to bind the certificate to.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def MintWorkerActorJwt(self, request, context):
+        """MintWorkerActorJwt creates a Substrate-issued JWT that asserts a worker
+        acting on behalf of a particular actor: the JWT counterpart of
+        MintWorkerActorCertificate. atelet calls it with its own client
+        certificate and hands the JWT to node-side plugins, which exchange it for
+        credentials scoped to that actor.
+
+        The token speaks for the worker, not the actor: its subject is
+        `worker-for-actor/<atespace>/<name>` and its claims sit under
+        `worker-for-actor.ate.dev`, see MintWorkerActorJwtResponse. The lifetime is
+        fixed at one hour.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RequestActorSuspend(self, request, context):
+        """RequestActorSuspend asks the control plane to suspend an Actor that the
+        calling Worker hosts. Only the Worker can observe what makes an Actor
+        worth reclaiming -- whether its workload still has anything to do -- and
+        only the control plane can decide whether to act on that.
+
+        This is a request, not a command. It runs the same suspend workflow
+        Control.SuspendActor runs, behind the same preconditions, so a proposal
+        that races a resume, suspend, or delete loses to it.
+
+        atelet calls this with its own client certificate, as it does for
+        RegisterWorker, naming the Worker its caller proved itself to be. The
+        control plane serves it only for an Actor that is assigned to that Worker.
+
+        Not idempotent, unlike Control.SuspendActor, which reports an
+        already-suspended Actor as the success it is. A suspend releases the
+        Worker it ran on, so the second request names an Actor the caller no
+        longer hosts, and is refused as NotFound like any other. A Worker that
+        retries a suspend it had already been granted therefore sees a failure
+        rather than a repeat of its success.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ReportActorSnapshotState(self, request, context):
+        """ReportActorSnapshotState reports an Actor's snapshot state on the caller's
+        node. The control plane records two facts from it: an upload finished, and
+        atelet detached the Actor from the node. Only atelet observes either.
+
+        atelet calls this with its own client certificate, for an Actor on its
+        node. Each report carries the whole state, so repeating one is safe.
+        Returns ABORTED while another operation is changing the Actor; retry.
+        Returns NOT_FOUND once the Actor is gone or no longer on the caller's
+        node. Returns FAILED_PRECONDITION or INVALID_ARGUMENT when the report
+        conflicts with the record; don't retry.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ReportActorCrashed(self, request, context):
+        """ReportActorCrashed tells the control plane that the sandbox of an Actor
+        the calling Worker hosts died on its own. Nothing else notices: the
+        control plane only learns of a dead sandbox when an operation on the Actor
+        fails.
+
+        A RUNNING Actor is moved to ACTOR_STATE_CRASHED and its Worker is
+        released. An Actor in any other state is left alone and the report is
+        refused as FailedPrecondition: an operation in flight owns the Actor and
+        fails on its own if the sandbox is gone. Authorized like
+        RequestActorSuspend.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+
+def add_WorkerServiceServicer_to_server(servicer, server):
+    rpc_method_handlers = {
+            'AcquireWorkerEpoch': grpc.unary_unary_rpc_method_handler(
+                    servicer.AcquireWorkerEpoch,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.AcquireWorkerEpochRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.AcquireWorkerEpochResponse.SerializeToString,
+            ),
+            'RegisterWorker': grpc.unary_unary_rpc_method_handler(
+                    servicer.RegisterWorker,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.RegisterWorkerRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.RegisterWorkerResponse.SerializeToString,
+            ),
+            'SetWorkerSandboxRuntimes': grpc.unary_unary_rpc_method_handler(
+                    servicer.SetWorkerSandboxRuntimes,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.SetWorkerSandboxRuntimesRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.SetWorkerSandboxRuntimesResponse.SerializeToString,
+            ),
+            'MintWorkerActorCertificate': grpc.unary_unary_rpc_method_handler(
+                    servicer.MintWorkerActorCertificate,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.MintWorkerActorCertificateRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.MintWorkerActorCertificateResponse.SerializeToString,
+            ),
+            'MintWorkerActorJwt': grpc.unary_unary_rpc_method_handler(
+                    servicer.MintWorkerActorJwt,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.MintWorkerActorJwtRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.MintWorkerActorJwtResponse.SerializeToString,
+            ),
+            'RequestActorSuspend': grpc.unary_unary_rpc_method_handler(
+                    servicer.RequestActorSuspend,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.RequestActorSuspendRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.RequestActorSuspendResponse.SerializeToString,
+            ),
+            'ReportActorSnapshotState': grpc.unary_unary_rpc_method_handler(
+                    servicer.ReportActorSnapshotState,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.ReportActorSnapshotStateRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.ReportActorSnapshotStateResponse.SerializeToString,
+            ),
+            'ReportActorCrashed': grpc.unary_unary_rpc_method_handler(
+                    servicer.ReportActorCrashed,
+                    request_deserializer=ateapipb_dot_ateapi__pb2.ReportActorCrashedRequest.FromString,
+                    response_serializer=ateapipb_dot_ateapi__pb2.ReportActorCrashedResponse.SerializeToString,
+            ),
+    }
+    generic_handler = grpc.method_handlers_generic_handler(
+            'substrate.ateapi.v1.WorkerService', rpc_method_handlers)
+    server.add_generic_rpc_handlers((generic_handler,))
+    server.add_registered_method_handlers('substrate.ateapi.v1.WorkerService', rpc_method_handlers)
+
+
+ # This class is part of an EXPERIMENTAL API.
+class WorkerService:
+    """WorkerService is how a Worker tells the control plane what it observes. It is
+    separate from Control because the two have different callers and different
+    authorization: Control is the client-facing API, while these RPCs are served
+    only to an atelet, and only for the Workers on its own node.
+    """
+
+    @staticmethod
+    def AcquireWorkerEpoch(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.WorkerService/AcquireWorkerEpoch',
+            ateapipb_dot_ateapi__pb2.AcquireWorkerEpochRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.AcquireWorkerEpochResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RegisterWorker(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.WorkerService/RegisterWorker',
+            ateapipb_dot_ateapi__pb2.RegisterWorkerRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.RegisterWorkerResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SetWorkerSandboxRuntimes(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.WorkerService/SetWorkerSandboxRuntimes',
+            ateapipb_dot_ateapi__pb2.SetWorkerSandboxRuntimesRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.SetWorkerSandboxRuntimesResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def MintWorkerActorCertificate(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.WorkerService/MintWorkerActorCertificate',
+            ateapipb_dot_ateapi__pb2.MintWorkerActorCertificateRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.MintWorkerActorCertificateResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def MintWorkerActorJwt(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.WorkerService/MintWorkerActorJwt',
+            ateapipb_dot_ateapi__pb2.MintWorkerActorJwtRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.MintWorkerActorJwtResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RequestActorSuspend(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.WorkerService/RequestActorSuspend',
+            ateapipb_dot_ateapi__pb2.RequestActorSuspendRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.RequestActorSuspendResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ReportActorSnapshotState(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.WorkerService/ReportActorSnapshotState',
+            ateapipb_dot_ateapi__pb2.ReportActorSnapshotStateRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.ReportActorSnapshotStateResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ReportActorCrashed(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/substrate.ateapi.v1.WorkerService/ReportActorCrashed',
+            ateapipb_dot_ateapi__pb2.ReportActorCrashedRequest.SerializeToString,
+            ateapipb_dot_ateapi__pb2.ReportActorCrashedResponse.FromString,
             options,
             channel_credentials,
             insecure,

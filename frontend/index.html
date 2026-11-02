@@ -28,7 +28,9 @@
     <div class="stat"><span id="m-checkedin">–</span><label>guests checked in</label></div>
     <div class="stat"><span id="m-workers">–</span><label>rooms (workers)</label></div>
     <div class="stat"><span id="m-awake">–</span><label>awake</label></div>
-    <div class="stat"><span id="m-suspended">–</span><label>sleeping in GCS</label></div>
+    <div class="stat"><span id="m-napping">–</span><label>asleep (on node)</label></div>
+    <div class="stat"><span id="m-suspended">–</span><label>asleep (in GCS)</label></div>
+    <div class="stat"><span id="m-crashed">–</span><label>crashed</label></div>
     <div class="stat highlight"><span id="m-saved">–</span><label>compute saved</label></div>
   </section>
 
@@ -50,7 +52,7 @@
     </div>
     <div id="chat-log" class="chat-log"></div>
     <form id="chat-form">
-      <input id="chat-input" type="text" placeholder="Say something…" autocomplete="off" />
+      <input id="chat-input" type="text" placeholder="Say something… (switch guests any time; replies keep coming)" autocomplete="off" />
       <button type="submit" id="chat-send">Send</button>
     </form>
   </aside>

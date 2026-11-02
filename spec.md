@@ -34,7 +34,7 @@ You open the **hotel floor plan**:
  └──────────────────────────────────────────────────────────────────────┘
 ```
 
-Each guest is a real, running AI agent (Gemini on Vertex AI) with a distinct personality.
+Each guest is a real, running AI agent (Gemini) with a distinct personality.
 What you do:
 
 1. **Chat with a guest.** Click Amara, ask her to plan a trip to Kyoto. She replies in
@@ -66,9 +66,12 @@ did come back to life.
 | **Suspend (checkpoint)** | Freeze the actor's RAM + filesystem into a snapshot in GCS, freeing the worker | A guest going 💤 |
 | **Resume-on-request** | Traffic addressed to a suspended actor transparently restores it first | Messaging a sleeping guest just… works |
 | **Zero-idle** | The actor itself decides to yield when it has nothing to do | Guests go to sleep ~10 s after replying |
+| **Asynchronous suspend** | The room is free as soon as the snapshot is on the node (sub-second); atelet uploads it to object storage in the background, after which the actor wakes anywhere | A guest shows 😴 while its snapshot uploads and 💤 once it is in GCS |
 | **Oversubscription** | Many actors mapped onto few workers | 12 guests, 3 rooms, 4× density |
-| **Golden snapshot** | A version-0 checkpoint taken at template creation; new actors start from it instantly instead of cold-booting | New guests "check in" in moments |
-| **Keyless credentials** | Nothing secret is baked into snapshots; agents authenticate to Vertex AI with Workload Identity tokens fetched fresh after every resume | Guests call Gemini with no API key anywhere |
+| **Golden snapshot** | A checkpoint taken at template creation and published as a Tag; new actors start from it instantly instead of cold-booting | New guests "check in" in moments |
+| **Egress policy** | Deny by default, down to DNS: an actor reaches exactly the hostnames its EgressPolicy names, through the egress gateway | Each guest may reach the concierge and the Gemini API, nothing else |
+| **Credential injection** | The egress gateway terminates the actor's TLS for an allowed hostname and replaces a header with a secret only *it* may read | Guests call Gemini with a placeholder key; the real key never enters a sandbox or a snapshot |
+| **Crash + revert** | A failed restore crashes the actor; `RevertActor` rewinds it to its last durable snapshot | A crashed guest is rewound on its next message |
 
 ## Architecture
 
@@ -80,19 +83,23 @@ Three layers, from what you see down to what does the magic:
       ▼
    Concierge (FastAPI, a normal pod — the only "smart" service we write)
       │  • serves the UI and the /api/state, /chat endpoints
-      │  • tells Substrate: create / suspend / resume guests (gRPC to ate-api-server)
+      │  • tells Substrate: create guests + their egress policy, suspend, revert,
+      │    delete (gRPC to ate-api-server, authorized by Substrate's access policies)
       │  • forwards each chat message "to the guest by name" via Substrate's router
+      │    (mTLS with its PodCertificate; the router admits only allowlisted identities)
       ▼
    Agent Substrate (the ate control plane, installed once per cluster)
       │  • ate-api-server — control API (create/suspend/resume actors)
-      │  • atenet-router  — resolves "amara.hotel.…" to wherever Amara is,
-      │                     waking her first if she's suspended
+      │  • atenet-router  — resolves `ate-target-actor: hotel/amara` to wherever
+      │                     Amara is, waking her first if she's suspended
+      │  • atenet-egress  — the only way out of a sandbox: enforces each guest's
+      │                     EgressPolicy and injects the Gemini key
       │  • WorkerPool     — the 3 warm worker pods ("rooms"), gVisor-sandboxed
       │  • GCS bucket     — where sleeping guests' checkpoints live
       ▼
    Guest agent (tiny HTTP server inside a sandboxed actor)
          • keeps conversation history in plain Python memory — no database
-         • calls Gemini (Vertex AI, Workload Identity) to reply in persona
+         • calls the Gemini API to reply in persona — with a placeholder key
          • ~10 s after its last reply, tells the concierge "I'm done, tuck me in"
 ```
 
@@ -101,9 +108,11 @@ The key flows:
 - **Chat**: browser → concierge → Substrate router (addressed by guest *name*, not pod) →
   the guest's actor → Gemini → reply. The concierge never needs to know where a guest
   physically is.
-- **Sleep (zero-idle)**: the guest itself decides it's idle and asks to be suspended; the
-  concierge executes the authenticated suspend call on its behalf, and a background
-  sweeper catches any guest that forgets. Checkpoint goes to GCS; the room frees up.
+- **Sleep (zero-idle)**: the guest itself decides it's idle and asks to be tucked in; the
+  concierge executes the authenticated `SuspendActor` on its behalf (asynchronous: the
+  room is free once the snapshot is on the node, ~0.5 s; atelet uploads it to GCS in the
+  background, after which the guest can wake on any room), and a background sweeper
+  catches any guest that forgets.
 - **Wake**: a new message for a sleeping guest hits the router, which restores the
   checkpoint onto any free room (evicting an idle guest if the hotel is full), then
   delivers the message. RAM, conversation, `boot_id` — all intact.
@@ -112,28 +121,34 @@ A few deliberate design choices, in plain terms:
 
 - **The guest holds its memory in RAM on purpose.** No database, no session store —
   demonstrating that Substrate's checkpointing *is* the persistence layer.
-- **A guest learns its identity from an explicit `X-Actor-Name` header** the concierge
-  sends with every request (the router's Envoy rewrites the Host header to the upstream
-  pod IP, so the classic name-from-Host trick is unreliable). The same header powers a
-  **misdirect guard**: during a suspend/resume shuffle the router can briefly proxy a
-  request to a room whose previous occupant is still bound — the guest answers
-  `421 Misdirected Request` instead of impersonating someone else, and the concierge
-  retries until the routing settles.
+- **A guest learns its identity from Substrate itself**: the ActorTemplate projects the
+  actor's metadata into the sandbox (a `systemInfo` volume), so the guest reads its own
+  name from a file. The concierge still sends `X-Actor-Name` with every request, which
+  powers a **misdirect guard**: should the router ever proxy a request to a room whose
+  previous occupant is still bound, the guest answers `421 Misdirected Request` instead
+  of impersonating someone else, and the concierge retries until the routing settles.
 - **The concierge retries transient data-path failures** (cold image pulls on a room's
   node, full-hotel resume contention, misdirects) for up to ~30 s — long enough for an
   idle guest to yield a room — before surfacing an error. `deploy_app.sh` additionally
   warms every room after a rebuild (one throwaway chat per room pre-pulls the new image
   onto each node) and then resets, so first real interactions are fast.
-- **No secrets in snapshots.** The agents use Vertex AI with Workload Identity (the same
-  pattern as the hub's `agent-sandbox` feature), so credentials are re-fetched after
-  every resume instead of being frozen into a checkpoint. If Vertex isn't available, the
-  guests fall back to scripted in-character replies so the demo always works.
+- **No secrets in snapshots — or in sandboxes.** Substrate blocks the metadata server
+  and everything else a guest did not get an egress rule for, so the guest cannot fetch
+  a credential itself. Instead the guests send the Gemini API key header with a
+  placeholder value and the egress gateway replaces it with the real key, read from a
+  Kubernetes Secret by Substrate's credential provider. A guest cannot read, snapshot
+  or exfiltrate its own key. If no key is configured, the guests fall back to scripted
+  in-character replies so the demo always works.
 - **One container image plays both roles** (concierge and guest), and the concierge
-  registers the guest template with Substrate at startup using its own image digest —
-  Substrate requires digest-pinned images, and this keeps rebuilds automatic.
-- **Waking takes ~10–30 seconds** (checkpoint restore from GCS; longer the first time a
-  node has to pull the guest image). The UI is honest about it — a "waking…" state, not
-  a spinner — and the load balancer timeout is raised so the request survives the wait.
+  registers the guest template with Substrate at startup (an ActorTemplate created
+  through the ate API) using its own image digest — Substrate requires digest-pinned
+  images, and this keeps rebuilds automatic. A new template gets a new golden
+  snapshot, published as a Tag; the UI shows whether it is ready. Each guest gets its
+  EgressPolicy at check-in, before its first message can wake it.
+- **Waking takes ~1 s from a node-local snapshot and a few seconds from GCS** (longer
+  the first time a node has to pull the guest image). The UI is honest about it — a
+  "waking…" state, not a spinner — and the load balancer timeout is raised so the
+  request survives the wait.
 
 ## How it runs
 
@@ -145,9 +160,9 @@ proof: chat → sleep → wake → memory intact). Configuration comes from a `.
 
 *(Planned, not yet implemented: mounting this repo into the GKE Feature Showcase Hub
 (`gke_all`) as a `features/substrate-hotel/` submodule with a dashboard card and mock
-mode. The cluster prerequisite is already shared: the installer deploys the same plane,
-at the same pinned upstream commit, as the hub's existing `substrate-overcommit`
-feature.)*
+mode. The cluster prerequisite is the same shape as the hub's existing
+`substrate-overcommit` feature — upstream's own installer — but this repo pins a newer
+upstream commit (see `cluster/README.md`); the hub feature would need the same bump.)*
 
 ## Repository tour
 
@@ -156,7 +171,7 @@ feature.)*
 | `app/agent/` | The guest: a tiny HTTP chat server + Gemini client |
 | `app/concierge.py` | The concierge API and UI server |
 | `app/ate_client.py` | The gRPC/router client for Substrate's control + data planes, plus the in-memory fake |
-| `app/template_manager.py` | Registers the digest-pinned ActorTemplate from the pod's own imageID |
+| `app/template_manager.py` | Builds the digest-pinned ActorTemplate (an ate API resource) and the guests' EgressPolicy |
 | `app/personas.py` | The guest roster — 20 personas (names, personalities, system prompts); 12 admitted by default |
 | `frontend/` | The hotel floor-plan UI |
 | `infra/` | Kubernetes manifests `deploy_app.sh` applies: concierge, WorkerPool, gateway |
@@ -167,14 +182,13 @@ feature.)*
 
 1. **Offline first** ✅ — the entire hotel (concierge, guests, UI) runs locally against a
    fake in-memory Substrate; full test suite, no cluster needed.
-2. **Real Substrate plane** ✅ — golden snapshots, Vertex calls from inside the sandbox,
+2. **Real Substrate plane** ✅ — golden snapshots, Gemini calls from inside the sandbox,
    and the sleep/wake cycle with a stable `boot_id` all verified end to end
    (`verify_setup.sh` automates the proof).
 3. **Standalone path** ✅ — fresh cluster from scratch via the three scripts.
 4. **Hub integration (mock mode, dashboard card, live deploy)** — planned, not started.
 
-The original open risk is resolved: guests DO reach Vertex AI from inside their gVisor
-sandbox (egress rides the worker pod's network namespace, so the call carries the worker
-pod's Workload Identity — grant that principal `roles/aiplatform.user`, or use the
-`WI_IMPERSONATE_GSA` knob in `.env` on projects whose IAM policy is centrally managed).
-The concierge `/llm` proxy fallback also exists (`LLM_MODE=proxy`).
+The original open risk (can a sandboxed guest reach an LLM at all?) is resolved the way
+Substrate now intends: a guest reaches exactly the hostnames its EgressPolicy allows,
+through the egress gateway, and the gateway injects the credential. The concierge
+`/llm` proxy fallback also exists (`LLM_MODE=proxy`).

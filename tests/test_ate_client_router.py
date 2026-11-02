@@ -35,6 +35,9 @@ class FakeResponse:
         return self._body
 
 
+MTLS = object()   # stands in for the mTLS ssl.SSLContext
+
+
 class FakeHttpx(types.ModuleType):
     """Stub httpx module: scripted responses + a call log."""
 
@@ -52,8 +55,12 @@ class FakeHttpx(types.ModuleType):
         stub = self
 
         class AsyncClient:
-            def __init__(self, timeout=None):
+            def __init__(self, timeout=None, verify=None):
                 stub.clients_built += 1
+                # The router demands mTLS: the client passes an SSL context
+                # that presents its projected PodCertificate and verifies the
+                # servicedns trust bundle.
+                stub.tls = verify
 
             async def __aenter__(self):
                 return self
@@ -89,6 +96,9 @@ def router_env(monkeypatch):
         )
         client = RealAteClient.__new__(RealAteClient)
         client._http = None  # __init__ (skipped: imports grpc) would set this
+        client._http_made_at = 0.0
+        # No projected certificates on a dev box: stand in for the context.
+        monkeypatch.setattr(RealAteClient, "_ssl_context", staticmethod(lambda: MTLS))
         return client, fake
 
     return setup
@@ -98,14 +108,19 @@ def run(coro):
     return asyncio.run(coro)
 
 
-def test_success_carries_both_identity_headers(router_env):
+def test_success_carries_routing_and_identity_headers(router_env):
     client, fake = router_env([FakeResponse(200, {"guest": "amara"})])
     out = run(client._router("POST", "amara", "/chat", {"message": "hi"}))
     assert out == {"guest": "amara"}
     assert len(fake.calls) == 1
     headers = fake.calls[0]["headers"]
-    assert headers["Host"].startswith("amara.")
+    # Substrate's routing header selects the actor; Host is left to httpx.
+    assert headers["ate-target-actor"] == "hotel/amara"
+    assert "Host" not in headers
+    # The guest's misdirect guard compares this with its projected identity.
     assert headers["X-Actor-Name"] == "amara"
+    assert fake.calls[0]["url"].startswith("https://atenet-router.ate-system.svc/")
+    assert fake.tls is MTLS
 
 
 def test_421_misdirect_is_retried_until_routing_settles(router_env):

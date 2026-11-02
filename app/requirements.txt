@@ -4,8 +4,9 @@ uvicorn>=0.29
 httpx>=0.27
 pydantic>=2.7
 # Control plane (concierge only; guests never import these)
-grpcio>=1.70
-protobuf>=6.31.0
+# Floors match the generated ateapipb/ stubs (grpcio-tools 1.85.1).
+grpcio>=1.85.1
+protobuf>=7.35.1
 kubernetes>=29.0
-# Gemini on Vertex AI via ADC (keyless)
+# Gemini API client (the key is injected by the egress gateway; guests only hold a placeholder)
 google-genai>=1.0

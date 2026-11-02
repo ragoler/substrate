@@ -51,9 +51,14 @@ spec:
           # HOTEL_USERNAME / HOTEL_PASSWORD for HTTP Basic auth. The Secret is
           # created by deploy_app.sh from .env (never rendered into manifests);
           # optional: with no Secret the hotel simply runs unauthenticated.
+          # GEMINI_API_KEY: the same Secret the egress gateway injects for the
+          # guests, here only for the /llm proxy fallback (LLM_MODE=proxy).
           envFrom:
             - secretRef:
                 name: substrate-hotel-auth
+                optional: true
+            - secretRef:
+                name: substrate-hotel-gemini
                 optional: true
           env:
             - name: ATE_MODE
@@ -80,21 +85,30 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
-            # Vertex AI via ADC — plain values only; no key anywhere.
-            - name: GOOGLE_GENAI_USE_VERTEXAI
-              value: "${GOOGLE_GENAI_USE_VERTEXAI}"
-            - name: GOOGLE_CLOUD_PROJECT
-              value: "${PROJECT_NAME}"
-            - name: GOOGLE_CLOUD_LOCATION
-              value: "${REGION}"
-            # Where guest snapshots land (must match the prereq's bucket).
-            - name: SNAPSHOTS_LOCATION
-              value: "gs://${PROJECT_NAME}-substrate-snapshots/substrate-hotel/"
+            # The guests' Gemini key reaches them by egress credential
+            # injection: this is the ate-secret:// URI the concierge writes
+            # into every guest's EgressPolicy (empty = canned replies).
+            - name: GEMINI_SECRET_URI
+              value: "${GEMINI_SECRET_URI}"
+            - name: GEMINI_MODEL
+              value: "${GEMINI_MODEL}"
           volumeMounts:
-            # Bearer token for ate-api-server (--auth-mode=jwt accepts any
-            # cluster-issuer SA token with this audience). Kubelet rotates it.
+            # Bearer token for ate-api-server: its authentication config
+            # (ConfigMap ate-system/ate-api-authentication, written by the
+            # upstream installer) accepts any cluster-issuer SA token with
+            # this audience. Kubelet rotates it.
             - name: ate-api-token
               mountPath: /var/run/secrets/tokens
+              readOnly: true
+            # Substrate's PKI, projected by kubelet (no Secrets, no shims):
+            #   servicedns-ca.pem     — trust anchor for ate-api-server and
+            #                           atenet-router serving certs
+            #   credential-bundle.pem — this pod's PodCertificate, the
+            #                           client cert the router demands
+            #                           (SPIFFE ID ns/<ns>/sa/<this SA>, which
+            #                           the installer allowlists)
+            - name: ate-client
+              mountPath: /run/ate-client
               readOnly: true
           # timeoutSeconds: the default is 1s — a briefly busy event loop
           # then fails 3 probes in a row, the pod goes NotReady, the NEG
@@ -125,3 +139,16 @@ spec:
                   path: ate-api-token
                   audience: api.ate-system.svc
                   expirationSeconds: 3600
+        - name: ate-client
+          projected:
+            sources:
+              - podCertificate:
+                  signerName: podidentity.podcert.ate.dev/identity
+                  keyType: ECDSAP256
+                  credentialBundlePath: credential-bundle.pem
+              - clusterTrustBundle:
+                  signerName: servicedns.podcert.ate.dev/identity
+                  labelSelector:
+                    matchLabels:
+                      podcert.ate.dev/canarying: live
+                  path: servicedns-ca.pem

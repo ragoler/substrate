@@ -8,6 +8,7 @@ import yaml
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INFRA = os.path.join(ROOT, "infra")
+INSTALLER = os.path.join(ROOT, "cluster", "install-substrate-hotel-prereq.sh")
 
 FAKE_VARS = {
     "NAMESPACE": "default",
@@ -15,17 +16,19 @@ FAKE_VARS = {
     "REGION": "us-central1",
     "ARTIFACT_REGISTRY_REPO": "substrate-hotel",
     "SUBSTRATE_HOTEL_IMAGE": "us-central1-docker.pkg.dev/fake-project/substrate-hotel/substrate-hotel:test",
-    "GOOGLE_GENAI_USE_VERTEXAI": "TRUE",
     "GUEST_COUNT": "12",
     "WORKER_REPLICAS": "3",
     "WORKER_NODE_SELECTOR": "{}",
+    "ATEWORKER_IMAGE": "ghcr.io/agent-substrate/substrate/ateworker-gvisor:v1.0.0-rc.1@sha256:" + "0" * 64,
     "LINGER_SECONDS": "10",
+    "GEMINI_SECRET_URI": "ate-secret://k8s.io/default/default/substrate-hotel-gemini/api-key",
+    "GEMINI_MODEL": "gemini-2.5-flash",
 }
 
 
-def render(path: str) -> str:
+def render(path: str, variables: dict | None = None) -> str:
     text = open(path).read()
-    for k, v in FAKE_VARS.items():
+    for k, v in (variables or FAKE_VARS).items():
         text = text.replace("${" + k + "}", v)
     return text
 
@@ -41,6 +44,10 @@ def rendered_docs():
             if doc:
                 docs.append((os.path.basename(f), doc))
     return docs
+
+
+def deployments():
+    return [d for _, d in rendered_docs() if d.get("kind") == "Deployment"]
 
 
 def test_infra_dir_is_not_empty():
@@ -65,18 +72,27 @@ def test_rbac_sorts_first():
 
 def test_deployment_and_names_are_consistent():
     docs = rendered_docs()
-    deployments = [d for _, d in docs if d.get("kind") == "Deployment"]
-    assert len(deployments) == 1
-    assert deployments[0]["metadata"]["name"] == "substrate-hotel-concierge-deployment"
+    assert len(deployments()) == 1
+    assert deployments()[0]["metadata"]["name"] == "substrate-hotel-concierge-deployment"
 
     # WorkerPool must NOT collide with the concierge: the ate-controller
-    # creates <workerpool>-deployment.
+    # creates a Deployment named after the pool.
     pools = [d for _, d in docs if d.get("kind") == "WorkerPool"]
     assert len(pools) == 1
-    assert pools[0]["metadata"]["name"] == "substrate-hotel"
+    pool = pools[0]
+    assert pool["apiVersion"] == "ate.dev/v1"
+    assert pool["metadata"]["name"] == "substrate-hotel"
     # replicas comes from ${WORKER_REPLICAS} and must render as a YAML int.
-    assert pools[0]["spec"]["replicas"] == int(FAKE_VARS["WORKER_REPLICAS"])
-    assert pools[0]["spec"]["sandboxClass"] == "gvisor"
+    assert pool["spec"]["replicas"] == int(FAKE_VARS["WORKER_REPLICAS"])
+    # The sandbox runtime is the pool's (class default SandboxConfig).
+    assert pool["spec"]["sandboxClasses"] == [{"name": "gvisor"}]
+    # Upstream's release worker image, pinned by digest.
+    assert pool["spec"]["workerImage"].startswith("ghcr.io/agent-substrate/substrate/ateworker-gvisor:")
+    assert "@sha256:" in pool["spec"]["workerImage"]
+    # Limits = the room's capacity (one guest); requests = what nodes pack by.
+    res = pool["spec"]["template"]["resources"]
+    assert res["limits"]["cpu"] and res["limits"]["memory"]
+    assert res["requests"]["cpu"] and res["requests"]["memory"]
 
     gateways = [d for _, d in docs if d.get("kind") == "Gateway"]
     assert len(gateways) == 1
@@ -92,18 +108,48 @@ def test_deployment_and_names_are_consistent():
 
 
 def test_concierge_env_is_keyless():
-    """The Vertex story: plain values only, no secret refs anywhere."""
-    for fname, doc in rendered_docs():
-        if doc.get("kind") != "Deployment":
-            continue
-        env = doc["spec"]["template"]["spec"]["containers"][0]["env"]
-        for e in env:
-            assert "secretKeyRef" not in str(e.get("valueFrom", "")), (
-                f"secret ref found in {fname}: {e}"
-            )
-        names = {e["name"] for e in env}
-        assert {"GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_CLOUD_PROJECT",
-                "GOOGLE_CLOUD_LOCATION"} <= names
+    """No credential in the concierge's env: the Gemini key reaches guests by
+    egress injection and the concierge only ever sees a Secret URI."""
+    env = deployments()[0]["spec"]["template"]["spec"]["containers"][0]["env"]
+    for e in env:
+        assert "secretKeyRef" not in str(e.get("valueFrom", "")), f"secret ref: {e}"
+    names = {e["name"]: e.get("value") for e in env}
+    assert names["GEMINI_SECRET_URI"].startswith("ate-secret://k8s.io/")
+    assert "GEMINI_API_KEY" not in names
+
+
+def test_concierge_mounts_substrate_pki():
+    """The concierge authenticates to the plane with what kubelet projects:
+    a ServiceAccount token (ate-api-server), a PodCertificate client cert
+    (atenet-router admits only allowlisted SPIFFE IDs) and the servicedns
+    ClusterTrustBundle to verify both. No Secrets, no CA shims."""
+    spec = deployments()[0]["spec"]["template"]["spec"]
+    sources = [
+        s for v in spec["volumes"] if v.get("projected")
+        for s in v["projected"]["sources"]
+    ]
+    tokens = [s["serviceAccountToken"] for s in sources if "serviceAccountToken" in s]
+    assert tokens and tokens[0]["audience"] == "api.ate-system.svc"
+    certs = [s["podCertificate"] for s in sources if "podCertificate" in s]
+    assert certs and certs[0]["signerName"] == "podidentity.podcert.ate.dev/identity"
+    assert certs[0]["credentialBundlePath"] == "credential-bundle.pem"
+    bundles = [s["clusterTrustBundle"] for s in sources if "clusterTrustBundle" in s]
+    assert bundles and bundles[0]["signerName"] == "servicedns.podcert.ate.dev/identity"
+    assert bundles[0]["path"] == "servicedns-ca.pem"
+    mounts = {m["name"]: m["mountPath"] for m in spec["containers"][0]["volumeMounts"]}
+    assert mounts["ate-client"] == "/run/ate-client"
+
+
+def test_rbac_is_minimal():
+    """Substrate authorizes the concierge with ITS access policies; Kubernetes
+    RBAC is only for self-inspection and scaling the WorkerPool."""
+    roles = [d for _, d in rendered_docs() if d.get("kind") in ("Role", "ClusterRole")]
+    assert len(roles) == 1 and roles[0]["kind"] == "Role"
+    rules = {(tuple(r["apiGroups"]), tuple(r["resources"]), tuple(r["verbs"])) for r in roles[0]["rules"]}
+    assert rules == {
+        (("",), ("pods",), ("get", "list")),
+        (("ate.dev",), ("workerpools",), ("get", "list", "patch")),
+    }
 
 
 def test_workerpool_node_selector_renders_both_ways():
@@ -114,62 +160,84 @@ def test_workerpool_node_selector_renders_both_ways():
     assert default["spec"]["template"]["nodeSelector"] == {}
 
     ccc_vars = dict(FAKE_VARS)
-    ccc_vars["WORKER_NODE_SELECTOR"] = (
-        '{"cloud.google.com/compute-class": "hotel-rooms"}'
-    )
-    text = open(path).read()
-    for k, v in ccc_vars.items():
-        text = text.replace("${" + k + "}", v)
-    ccc = yaml.safe_load(text)
+    ccc_vars["WORKER_NODE_SELECTOR"] = '{"cloud.google.com/compute-class": "hotel-rooms"}'
+    ccc = yaml.safe_load(render(path, ccc_vars))
     assert ccc["spec"]["template"]["nodeSelector"] == {
         "cloud.google.com/compute-class": "hotel-rooms"
     }
 
-    # The selector must match the ComputeClass the installer applies.
-    cc = yaml.safe_load(
-        open(os.path.join(ROOT, "cluster", "compute-class.yaml"))
-    )
+    # The selector must match the ComputeClass setup_infra.sh applies; one
+    # machine type only (a gVisor memory snapshot restores in full only on
+    # the CPU platform it was taken on).
+    cc = yaml.safe_load(open(os.path.join(ROOT, "cluster", "compute-class.yaml")))
     assert cc["kind"] == "ComputeClass"
     assert cc["metadata"]["name"] == "hotel-rooms"
     assert cc["spec"]["nodePoolAutoCreation"]["enabled"] is True
+    assert cc["spec"]["priorities"] == [{"machineType": "c3-standard-4"}]
+    assert cc["spec"]["whenUnsatisfiable"] == "DoNotScaleUp"
 
 
 def test_concierge_drains_on_termination():
     """Hitless rollouts: the GCLB data plane lags ~1-2 min detaching a killed
     endpoint, so the pod must keep serving (preStop sleep) while it drains —
     without it every rollout serves 'no healthy upstream'."""
-    for fname, doc in rendered_docs():
-        if doc.get("kind") != "Deployment":
-            continue
-        spec = doc["spec"]["template"]["spec"]
-        container = spec["containers"][0]
-        pre_stop = container["lifecycle"]["preStop"]["exec"]["command"]
-        assert pre_stop[0] == "sleep"
-        drain = int(pre_stop[1])
-        assert drain >= 30
-        # Grace must outlast the drain or the kubelet kills the pod mid-sleep.
-        assert spec["terminationGracePeriodSeconds"] > drain
+    spec = deployments()[0]["spec"]["template"]["spec"]
+    container = spec["containers"][0]
+    pre_stop = container["lifecycle"]["preStop"]["exec"]["command"]
+    assert pre_stop[0] == "sleep"
+    drain = int(pre_stop[1])
+    assert drain >= 30
+    # Grace must outlast the drain or the kubelet kills the pod mid-sleep.
+    assert spec["terminationGracePeriodSeconds"] > drain
 
 
-def test_atelet_tolerates_compute_class_nodes():
-    """The installer must schedule atelet onto NAP nodes: rooms on a
-    Custom-Compute-Class node are unusable without a local atelet (every
-    ResumeActor fails with 'found 0 atelet pods on node'). Upstream's
-    DaemonSet has no tolerations, so the installer patches one in."""
-    script = open(
-        os.path.join(ROOT, "cluster", "install-substrate-hotel-prereq.sh")
-    ).read()
-    patch_at = script.find("patch daemonset atelet")
-    assert patch_at != -1, "no atelet toleration patch in the installer"
-    patch_block = script[patch_at:patch_at + 400]
-    assert "cloud.google.com/compute-class" in patch_block
-    assert '"operator": "Exists"' in patch_block
+def test_installer_installs_the_pinned_release_with_prebuilt_images():
+    """The plane comes from upstream's release: ate-setup from a checkout of
+    the tag in lib.sh, images from ghcr.io, no source build."""
+    lib = open(os.path.join(ROOT, "lib.sh")).read()
+    assert 'UPSTREAM_REF="${UPSTREAM_REF:-v' in lib
+    assert "ghcr.io/agent-substrate/substrate" in lib
+    script = open(INSTALLER).read()
+    assert "go run ./cmd/ate-setup deploy ate-system" in script
+    assert "--config" in script and "substrate-install.yaml.tmpl" in script
+    assert "ko build" not in script and "xds.go" not in script
+    tmpl = open(os.path.join(ROOT, "cluster", "substrate-install.yaml.tmpl")).read()
+    assert "repo: ${UPSTREAM_IMAGE_REPO}" in tmpl and "tag: ${UPSTREAM_REF}" in tmpl
+    assert "snapshotLocation: gs://${SNAPSHOT_BUCKET}/" in tmpl
+
+
+def test_installer_wires_identity_and_access():
+    """Who may reach what: the router admits the concierge's and kubectl-ate's
+    SPIFFE IDs; the hotel namespace is admitted to ate-api-server; the
+    credential provider may resolve the hotel namespace's Secrets for the
+    hotel atespace."""
+    script = open(INSTALLER).read()
+    assert "--ingress-allowed-spiffe-ids" in script
+    assert 'spiffe://cluster.local/ns/${APP_NAMESPACE}/sa/substrate-hotel-concierge' in script
+    assert "spiffe://cluster.local/ns/${ATE_SYSTEM_NS}/sa/atenet-client" in script
+    assert "ate.dev/api-access=true" in script
+    assert '--credential-provider \'{"name":"k8s.io"}\'' in script
+    assert "k8s-credential-provider-namespace-policy" in script
+    assert "allowedNamespaces" in script
+
+
+def test_installer_tunes_the_plane_without_replacing_upstream_lists():
+    """Resumes take tens of seconds (router parked budget); NAP room nodes
+    are tainted (atelet toleration APPENDED — upstream ships its own)."""
+    script = open(INSTALLER).read()
+    assert "--parked-request-budget=90s" in script
+    assert "/spec/template/spec/tolerations/-" in script
+    assert '"path": "/spec/template/spec/tolerations"' not in script
+    assert "cloud.google.com/compute-class" in script
+    # The version-label machinery is gone upstream; nothing may reference it.
+    assert "substrate-version" not in script
+    assert "substrate-version" not in open(os.path.join(ROOT, "setup_infra.sh")).read()
 
 
 def test_internal_paths_never_reach_the_backend():
     """/internal/* and /llm are cluster-internal (guest yield requests, the
-    Vertex proxy). The route must redirect them away instead of proxying —
-    an exposed /llm is a free Gemini proxy for the whole internet."""
+    Gemini proxy fallback). The route must redirect them away instead of
+    proxying — an exposed /llm is a free Gemini proxy for the whole internet."""
     routes = [d for _, d in rendered_docs() if d.get("kind") == "HTTPRoute"]
     assert len(routes) == 1
     blocked = [
@@ -195,28 +263,10 @@ def test_lb_health_check_targets_healthz():
     assert check["port"] == 8000
 
 
-def test_auth_secret_is_injected_and_optional():
-    """Basic-auth credentials come from the substrate-hotel-auth Secret
-    (created by deploy_app.sh, never rendered into manifests) and must be
-    optional — no Secret simply means an unauthenticated hotel."""
-    for fname, doc in rendered_docs():
-        if doc.get("kind") != "Deployment":
-            continue
-        env_from = doc["spec"]["template"]["spec"]["containers"][0]["envFrom"]
-        secret_refs = [e["secretRef"] for e in env_from if "secretRef" in e]
-        assert secret_refs, f"no secretRef envFrom in {fname}"
-        assert secret_refs[0]["name"] == "substrate-hotel-auth"
-        assert secret_refs[0]["optional"] is True
-
-
-def test_projected_token_audience():
-    for _, doc in rendered_docs():
-        if doc.get("kind") != "Deployment":
-            continue
-        vols = doc["spec"]["template"]["spec"]["volumes"]
-        tokens = [
-            s["serviceAccountToken"]
-            for v in vols if v.get("projected")
-            for s in v["projected"]["sources"] if "serviceAccountToken" in s
-        ]
-        assert tokens and tokens[0]["audience"] == "api.ate-system.svc"
+def test_secrets_are_injected_and_optional():
+    """Basic-auth credentials and the Gemini key come from Secrets created by
+    deploy_app.sh (never rendered into manifests) and must be optional — no
+    Secret means an unauthenticated hotel / scripted replies."""
+    env_from = deployments()[0]["spec"]["template"]["spec"]["containers"][0]["envFrom"]
+    refs = {e["secretRef"]["name"]: e["secretRef"]["optional"] for e in env_from if "secretRef" in e}
+    assert refs == {"substrate-hotel-auth": True, "substrate-hotel-gemini": True}

@@ -75,8 +75,12 @@ def test_state_shape_empty_hotel(concierge_client):
     assert len(s["guests"]) == 12
     assert all(g["status"] == "vacant" for g in s["guests"])
     assert len(s["workers"]) == 3
+    assert all(w["occupant"] is None for w in s["workers"])
     m = s["meter"]
     assert m["checked_in"] == 0 and m["capacity"] == 12 and m["workers"] == 3
+    # Golden-snapshot readiness of the guest template (fake plane: ready).
+    assert s["golden"]["golden_ready"] is True and s["golden"]["error"] is None
+    assert s["golden"]["golden_tag"]          # the template's published golden Tag
 
 
 def test_chat_checks_in_and_remembers(concierge_client):
@@ -91,6 +95,10 @@ def test_chat_checks_in_and_remembers(concierge_client):
     amara = next(g for g in s["guests"] if g["name"] == "amara")
     assert amara["status"] == "awake"
     assert amara["worker_pod"] is not None
+    # Room occupancy is derived from the actors' worker assignment (workers
+    # themselves no longer report who they host).
+    rooms = [w for w in s["workers"] if w["occupant"] == "amara"]
+    assert len(rooms) == 1 and rooms[0]["pod"] == amara["worker_pod"]
 
     r2 = concierge_client.post(
         "/api/guests/amara/chat", json={"message": "what did I tell you?"}
@@ -123,6 +131,85 @@ def test_yield_suspends_only_when_idle(concierge_client):
     kai = next(g for g in s["guests"] if g["name"] == "kai")
     assert kai["status"] == "suspended"
     assert kai["worker_pod"] is None
+    assert s["meter"]["suspended"] == 1 and s["meter"]["awake"] == 0
+
+
+def test_check_in_creates_the_egress_policy_first(concierge_client):
+    """A Substrate actor reaches nothing (not even DNS) without an
+    EgressPolicy, so check-in writes it right behind CreateActor — before the
+    first chat can wake the guest and have it call Gemini."""
+    from app import concierge as mod
+
+    concierge_client.post("/api/guests/kai/chat", json={"message": "hi"})
+    rules = mod.ate.egress_policies["kai"]
+    assert rules and "http" in rules[0]
+    assert rules[0]["http"]["hostnames"] == ["substrate-hotel-concierge.default.svc.cluster.local"]
+    # A guest that exists without a policy (a failed earlier attempt, another
+    # replica's check-in) gets one on its next chat rather than staying mute.
+    mod.ate.egress_policies.pop("kai")
+    mod.policy_ok.discard("kai")
+    concierge_client.post("/api/guests/kai/chat", json={"message": "again"})
+    assert "kai" in mod.ate.egress_policies
+
+
+def test_crashed_guest_is_reverted_then_woken(concierge_client):
+    """A failed restore leaves an actor CRASHED and the router refuses to
+    resume it. The concierge rewinds it (RevertActor) to its last durable
+    snapshot and the same chat wakes it from there — memory up to that
+    snapshot intact."""
+    from app import concierge as mod
+
+    r1 = concierge_client.post("/api/guests/kai/chat", json={"message": "remember: tango"}).json()
+    mod.activity["kai"] = time.monotonic() - 999
+    concierge_client.post("/internal/yield", json={"guest": "kai"})
+    mod.ate.crash("kai", "runsc restore: exit status 128")
+    s = concierge_client.get("/api/state").json()
+    kai = next(g for g in s["guests"] if g["name"] == "kai")
+    assert kai["status"] == "crashed" and "runsc" in kai["crash"]
+    assert s["meter"]["crashed"] == 1
+
+    r2 = concierge_client.post("/api/guests/kai/chat", json={"message": "what did I say?"}).json()
+    assert r2["was_suspended"] is True and r2["slept_as"] == "crashed"
+    assert r2["boot_id"] == r1["boot_id"]
+    assert "tango" in r2["reply"]
+    s = concierge_client.get("/api/state").json()
+    assert next(g for g in s["guests"] if g["name"] == "kai")["status"] == "awake"
+
+
+def test_history_never_wakes_a_sleeping_guest(concierge_client):
+    """Opening a drawer must not resume a guest (that would occupy a room
+    just to render text); the UI keeps its own transcript."""
+    from app import concierge as mod
+
+    concierge_client.post("/api/guests/kai/chat", json={"message": "hi"})
+    assert concierge_client.get("/api/guests/kai/history").json()["history"]
+    mod.activity["kai"] = time.monotonic() - 999
+    concierge_client.post("/internal/yield", json={"guest": "kai"})
+    h = concierge_client.get("/api/guests/kai/history").json()
+    assert h["asleep"] == "suspended" and h["history"] == []
+    s = concierge_client.get("/api/state").json()
+    assert next(g for g in s["guests"] if g["name"] == "kai")["status"] == "suspended"
+
+
+def test_async_suspend_naps_until_the_upload_lands(concierge_client):
+    """SuspendActor returns once the snapshot is on the node ("napping", the
+    room is already free); atelet uploads it in the background and the guest
+    becomes "suspended" (durable, wakes anywhere). Either state wakes on chat."""
+    from app import concierge as mod
+
+    mod.ate.upload_latency = 0.2
+    r1 = concierge_client.post("/api/guests/kai/chat", json={"message": "hi"}).json()
+    mod.activity["kai"] = time.monotonic() - 999
+    concierge_client.post("/internal/yield", json={"guest": "kai"})
+    s = concierge_client.get("/api/state").json()
+    assert next(g for g in s["guests"] if g["name"] == "kai")["status"] == "napping"
+    assert s["meter"]["napping"] == 1 and s["meter"]["workers"] == 3
+    assert all(w["occupant"] is None for w in s["workers"])
+    time.sleep(0.25)
+    s = concierge_client.get("/api/state").json()
+    assert next(g for g in s["guests"] if g["name"] == "kai")["status"] == "suspended"
+    r2 = concierge_client.post("/api/guests/kai/chat", json={"message": "back?"}).json()
+    assert r2["slept_as"] == "suspended" and r2["boot_id"] == r1["boot_id"]
 
 
 def test_yield_refused_while_chat_in_flight(concierge_client):
@@ -159,6 +246,7 @@ def test_resume_on_request_preserves_ram(concierge_client):
         "/api/guests/wren/chat", json={"message": "what do you remember?"}
     ).json()
     assert r2["was_suspended"] is True
+    assert r2["slept_as"] == "suspended"
     assert r2["boot_id"] == r1["boot_id"]
     assert "orion" in r2["reply"]
 
@@ -208,9 +296,8 @@ def test_open_and_reset(concierge_client):
 
 
 def test_reset_deletes_awake_guests(concierge_client):
-    """Reset while guests are RUNNING: the plane refuses a direct delete, so
-    the concierge must suspend first (regression: reset used to error with
-    'Actor X is not suspended (status: STATUS_RUNNING)')."""
+    """Reset while guests are RUNNING: DeleteActor terminates the sandbox
+    and releases the room — no suspend dance."""
     for g in ["marisol", "viktor"]:
         concierge_client.post(f"/api/guests/{g}/chat", json={"message": "hi"})
     s = concierge_client.get("/api/state").json()
@@ -301,3 +388,18 @@ def test_index_serves_frontend(concierge_client):
     resp = concierge_client.get("/")
     assert resp.status_code == 200
     assert "Agent Hotel" in resp.text
+
+
+def test_sweeper_leaves_non_guest_actors_alone(concierge_client):
+    """Substrate builds a template's golden snapshot from a temporary actor
+    in the hotel atespace (named after the template UID). The sweeper must
+    never touch actors that are not hotel guests."""
+    import asyncio
+
+    from app import concierge as mod
+
+    golden = "3f8b1c2d-0000-4000-8000-000000000001"
+    asyncio.run(mod.ate.create_actor(golden, "guest-fake"))
+    mod.SWEEP_IDLE_SECONDS = 0
+    asyncio.run(mod._sweep_once())
+    assert mod.ate.actors[golden]["status"] == "awake"

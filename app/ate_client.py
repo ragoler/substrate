@@ -2,18 +2,20 @@
 
 Two interchangeable implementations, selected by env ATE_MODE:
 
-  real — talks to the actual plane installed by
-         cluster/install-substrate-hotel-prereq.sh:
+  real — talks to the plane installed by cluster/install-substrate-hotel-prereq.sh
+         (upstream release images, see lib.sh UPSTREAM_REF):
            * control: gRPC to ate-api-server (api.ate-system.svc:443).
-             TLS is verified against Secret ate-system/servicedns-ca — a
-             shim the installer mirrors from the podcertificate controller's
-             service-dns CA pool; the bearer token is this pod's own
-             projected ServiceAccount token with audience api.ate-system.svc
-             (the api-server accepts any cluster-issuer token with that
-             audience).
-           * data: HTTP through atenet-router with a
-             Host: <guest>.hotel.actors... header. The router transparently
-             RESUMES a suspended guest before proxying — resume-on-request.
+             TLS is verified against the servicedns ClusterTrustBundle that
+             kubelet projects into the pod; the bearer token is the pod's own
+             projected ServiceAccount token with audience api.ate-system.svc.
+             What the token may do is decided by Substrate's access policies
+             (deploy_app.sh grants this ServiceAccount `editor` on the hotel
+             atespace and `viewer` globally).
+           * data: HTTPS through atenet-router with the pod's PodCertificate
+             as client certificate (the router admits only allowlisted SPIFFE
+             IDs) and the `ate-target-actor: hotel/<guest>` routing header.
+             The router transparently RESUMES a suspended guest before
+             proxying — resume-on-request.
 
   fake — a complete in-memory hotel (3 worker slots, per-guest in-process
          agent state) so the whole app + test suite runs with no cluster,
@@ -31,20 +33,38 @@ import uuid
 
 logger = logging.getLogger(__name__)
 
-ATESPACE = "hotel"
+ATESPACE = os.environ.get("ATESPACE", "hotel")
 WORKER_POOL = os.environ.get("WORKER_POOL", "substrate-hotel")
 ATE_API_TARGET = os.environ.get("ATE_API_TARGET", "api.ate-system.svc:443")
-ATE_SYSTEM_NS = "ate-system"
-ROUTER_URL = os.environ.get("ROUTER_URL", "http://atenet-router.ate-system.svc/")
-ACTOR_HOST_SUFFIX = f".{ATESPACE}.actors.resources.substrate.ate.dev"
-# Chat through the router may transparently resume a suspended guest
-# (snapshot restore + worker bind) — tens of seconds, not a proxy hop.
-CHAT_TIMEOUT_S = float(os.environ.get("CHAT_TIMEOUT_S", "120"))
-# Kubelet rotates the projected token; re-read it from disk at most this often.
+ROUTER_URL = os.environ.get("ROUTER_URL", "https://atenet-router.ate-system.svc/")
+# Projected by kubelet (see infra/deployment.yaml):
+#   servicedns-ca.pem      — ClusterTrustBundle of the servicedns signer; the
+#                            serving CA of ate-api-server AND atenet-router
+#   credential-bundle.pem  — this pod's PodCertificate (chain + key) from the
+#                            podidentity signer: the router's client cert
+ATE_CA_FILE = os.environ.get("ATE_CA_FILE", "/run/ate-client/servicedns-ca.pem")
+ATE_CLIENT_CERT_FILE = os.environ.get(
+    "ATE_CLIENT_CERT_FILE", "/run/ate-client/credential-bundle.pem"
+)
 PROJECTED_TOKEN_PATH = os.environ.get(
     "ATE_TOKEN_PATH", "/var/run/secrets/tokens/ate-api-token"
 )
+# Chat through the router may transparently resume a suspended guest
+# (snapshot restore + worker bind) — tens of seconds, not a proxy hop.
+CHAT_TIMEOUT_S = float(os.environ.get("CHAT_TIMEOUT_S", "120"))
+# Kubelet rotates the projected token and certificate; re-read them from disk
+# at most this often (the client cert lives ~24h, the token 1h).
 _TOKEN_REREAD_S = 300.0
+_HTTP_CLIENT_REFRESH_S = 600.0
+
+# How the concierge names Substrate actor states to the UI.
+STATUS_AWAKE = "awake"
+STATUS_WAKING = "waking"
+STATUS_SUSPENDING = "suspending"
+STATUS_NAPPING = "napping"        # suspended; snapshot still only on the node
+STATUS_SUSPENDED = "suspended"    # suspended; snapshot durable in GCS
+STATUS_CRASHED = "crashed"
+ASLEEP_STATES = (STATUS_NAPPING, STATUS_SUSPENDED)
 
 
 class AteError(Exception):
@@ -64,25 +84,12 @@ class RealAteClient:
         import grpc  # noqa: F401 — fail fast at construction if missing
 
         self._channel = None
-        self._ca_pem: bytes | None = None
         self._token: str | None = None
         self._token_read_at = 0.0
-        self._atespace_ready = False
         self._http = None  # lazy shared httpx.AsyncClient (connection reuse)
+        self._http_made_at = 0.0
 
     # -- auth plumbing ------------------------------------------------------
-    def _read_ca_pem_sync(self) -> bytes:
-        """CA from Secret ate-system/servicedns-ca (name-scoped ClusterRole)."""
-        import base64
-
-        from kubernetes import client, config
-
-        config.load_incluster_config()
-        secret = client.CoreV1Api().read_namespaced_secret(
-            "servicedns-ca", ATE_SYSTEM_NS
-        )
-        return base64.b64decode(secret.data["trust-bundle.pem"])
-
     async def _get_token(self) -> str:
         now = time.monotonic()
         if self._token is None or now - self._token_read_at > _TOKEN_REREAD_S:
@@ -100,11 +107,10 @@ class RealAteClient:
         from ateapipb import ateapi_pb2_grpc
 
         if self._channel is None:
-            if self._ca_pem is None:
-                self._ca_pem = await asyncio.to_thread(self._read_ca_pem_sync)
+            ca_pem = await asyncio.to_thread(lambda: open(ATE_CA_FILE, "rb").read())
             self._channel = grpc.aio.secure_channel(
                 ATE_API_TARGET,
-                grpc.ssl_channel_credentials(root_certificates=self._ca_pem),
+                grpc.ssl_channel_credentials(root_certificates=ca_pem),
             )
         return ateapi_pb2_grpc.ControlStub(self._channel)
 
@@ -118,8 +124,18 @@ class RealAteClient:
         code = e.code()
         if code == grpc.StatusCode.NOT_FOUND:
             return AteError(404, e.details())
-        if code in (grpc.StatusCode.ALREADY_EXISTS, grpc.StatusCode.FAILED_PRECONDITION):
+        if code in (grpc.StatusCode.ALREADY_EXISTS, grpc.StatusCode.FAILED_PRECONDITION,
+                    grpc.StatusCode.ABORTED):
             return AteError(409, e.details())
+        if code == grpc.StatusCode.PERMISSION_DENIED:
+            return AteError(
+                403,
+                "ate-api-server denied the concierge: " + e.details()
+                + " (deploy_app.sh grants its ServiceAccount editor on the "
+                "hotel atespace and viewer globally)",
+            )
+        if code == grpc.StatusCode.RESOURCE_EXHAUSTED:
+            return AteError(503, "no room free: " + e.details())
         if code == grpc.StatusCode.UNAVAILABLE:
             return AteError(503, "ate api-server unavailable")
         return AteError(502, f"{code.name}: {e.details()}")
@@ -127,50 +143,77 @@ class RealAteClient:
     def _ref(self, name: str):
         from ateapipb import ateapi_pb2
 
-        # Upstream tip: ActorRef became the generic ObjectRef.
         return ateapi_pb2.ObjectRef(atespace=ATESPACE, name=name)
 
-    # -- control plane ------------------------------------------------------
-    async def ensure_atespace(self) -> None:
+    # -- control plane: template ----------------------------------------------
+    async def ensure_template(self, name: str, body: dict) -> str:
+        """Create the ActorTemplate `body` (protojson-shaped) if absent.
+
+        Templates are immutable ate API resources in the hotel atespace, so
+        ALREADY_EXISTS means a previous concierge replica (or rollout) already
+        registered this image digest — that is success. Returns the name.
+        """
         import grpc
+        from google.protobuf import json_format
 
         from ateapipb import ateapi_pb2
 
-        if self._atespace_ready:
-            return
+        template = json_format.ParseDict(body, ateapi_pb2.ActorTemplate())
         stub = await self._stub()
         try:
-            await stub.CreateAtespace(
-                # Tip API: requests carry the full resource, not a bare name.
-                ateapi_pb2.CreateAtespaceRequest(
-                    atespace=ateapi_pb2.Atespace(
-                        metadata=ateapi_pb2.ResourceMetadata(name=ATESPACE)
-                    )
-                ),
+            await stub.CreateActorTemplate(
+                ateapi_pb2.CreateActorTemplateRequest(actor_template=template),
                 metadata=await self._md(),
             )
+            logger.info("created ActorTemplate %s/%s", ATESPACE, name)
         except grpc.aio.AioRpcError as e:
             if e.code() != grpc.StatusCode.ALREADY_EXISTS:
                 raise self._wrap(e)
-        self._atespace_ready = True
+        return name
 
-    async def create_actor(self, name: str, template_ns: str, template_name: str) -> None:
+    async def template_status(self, name: str) -> dict:
+        """Golden-snapshot readiness of a template.
+
+        Substrate boots one golden actor per template, snapshots it and
+        publishes the snapshot as a Tag; new actors start from that tag in
+        moments. Until it exists a first chat cold-boots the image; if it
+        failed, every check-in fails — surface both states to the UI.
+        """
         import grpc
 
         from ateapipb import ateapi_pb2
 
-        await self.ensure_atespace()
+        stub = await self._stub()
+        try:
+            tmpl = await stub.GetActorTemplate(
+                ateapi_pb2.GetActorTemplateRequest(actor_template=self._ref(name)),
+                metadata=await self._md(),
+            )
+        except grpc.aio.AioRpcError as e:
+            raise self._wrap(e)
+        golden = tmpl.status.golden_snapshot_status
+        return {
+            "golden_ready": bool(golden.golden_tag.name),
+            "golden_tag": golden.golden_tag.name or None,
+            "error": golden.error_message or None,
+        }
+
+    # -- control plane: actors ---------------------------------------------------
+    async def create_actor(self, name: str, template_name: str) -> None:
+        import grpc
+
+        from ateapipb import ateapi_pb2
+
         stub = await self._stub()
         try:
             await stub.CreateActor(
-                # Tip API: the template refs + selector moved inside Actor.
                 ateapi_pb2.CreateActorRequest(
                     actor=ateapi_pb2.Actor(
                         metadata=ateapi_pb2.ResourceMetadata(
                             atespace=ATESPACE, name=name
                         ),
-                        actor_template_namespace=template_ns,
-                        actor_template_name=template_name,
+                        # The template lives in the same atespace as the actor.
+                        actor_template=self._ref(template_name),
                         worker_selector=ateapi_pb2.Selector(
                             match_labels={"workload": WORKER_POOL}
                         ),
@@ -182,16 +225,59 @@ class RealAteClient:
             if e.code() != grpc.StatusCode.ALREADY_EXISTS:
                 raise self._wrap(e)
 
-    async def suspend_actor(self, name: str) -> bool:
-        """Best-effort suspend; False when already suspending/absent."""
+    async def ensure_egress_policy(self, name: str, rules: list[dict]) -> None:
+        """Give a guest its network allowlist (protojson-shaped EgressRules).
+
+        Without an EgressPolicy an actor resolves no DNS name and opens no
+        tunnel: the sandbox's DNS relay answers NXDOMAIN and the egress
+        gateway refuses the CONNECT. The policy must exist before the
+        guest's first outbound call — i.e. right after CreateActor, before
+        the first chat. ALREADY_EXISTS is success (one policy per actor).
+        """
+        import grpc
+        from google.protobuf import json_format
+
+        from ateapipb import ateapi_pb2
+
+        policy = json_format.ParseDict(
+            # One policy per actor, named "default", in the actor's atespace.
+            {"metadata": {"atespace": ATESPACE, "name": "default"}, "rules": rules},
+            ateapi_pb2.EgressPolicy(),
+        )
+        stub = await self._stub()
+        try:
+            await stub.CreateActorEgressPolicy(
+                ateapi_pb2.CreateActorEgressPolicyRequest(
+                    actor=self._ref(name), egress_policy=policy
+                ),
+                metadata=await self._md(),
+            )
+        except grpc.aio.AioRpcError as e:
+            if e.code() != grpc.StatusCode.ALREADY_EXISTS:
+                raise self._wrap(e)
+
+    async def suspend_actor(self, name: str, durable: bool = False) -> bool:
+        """Checkpoint the guest and free its room.
+
+        The default (asynchronous) suspend returns as soon as the snapshot is
+        captured on the worker's node — sub-second — and atelet uploads it to
+        GCS in the background; the actor can resume anywhere once the upload
+        lands and immediately on its own node before that. durable=True
+        waits for the upload. False when already asleep/absent/in flux.
+        """
         import grpc
 
         from ateapipb import ateapi_pb2
 
+        mode = (ateapi_pb2.DURABILITY_MODE_SYNCHRONOUS if durable
+                else ateapi_pb2.DURABILITY_MODE_ASYNCHRONOUS)
         stub = await self._stub()
         try:
             await stub.SuspendActor(
-                ateapi_pb2.SuspendActorRequest(actor=self._ref(name)),
+                ateapi_pb2.SuspendActorRequest(
+                    actor=self._ref(name),
+                    options=ateapi_pb2.SuspendOptions(mode=mode),
+                ),
                 metadata=await self._md(),
             )
             return True
@@ -200,11 +286,36 @@ class RealAteClient:
                 grpc.StatusCode.FAILED_PRECONDITION,
                 grpc.StatusCode.NOT_FOUND,
                 grpc.StatusCode.ALREADY_EXISTS,
+                grpc.StatusCode.ABORTED,
             ):
                 return False
             raise self._wrap(e)
 
+    async def revert_actor(self, name: str) -> bool:
+        """Rewind a CRASHED (or stuck RUNNING) guest to its last durable
+        snapshot, leaving it SUSPENDED and resumable. False when the plane
+        says there is nothing to revert (already at its durable snapshot)."""
+        import grpc
+
+        from ateapipb import ateapi_pb2
+
+        stub = await self._stub()
+        try:
+            await stub.RevertActor(
+                ateapi_pb2.RevertActorRequest(actor=self._ref(name)),
+                metadata=await self._md(),
+            )
+            return True
+        except grpc.aio.AioRpcError as e:
+            if e.code() in (grpc.StatusCode.FAILED_PRECONDITION,
+                            grpc.StatusCode.NOT_FOUND,
+                            grpc.StatusCode.ABORTED):
+                return False
+            raise self._wrap(e)
+
     async def delete_actor(self, name: str) -> None:
+        """Delete an actor in ANY state: the plane terminates a running
+        sandbox, releases the room and collects the actor's snapshots."""
         import grpc
 
         from ateapipb import ateapi_pb2
@@ -219,38 +330,69 @@ class RealAteClient:
             if e.code() != grpc.StatusCode.NOT_FOUND:
                 raise self._wrap(e)
 
+    @staticmethod
+    def _status_of(actor) -> str:
+        """Map an Actor's state (+ snapshot durability) onto hotel vocabulary."""
+        from ateapipb import ateapi_pb2
+
+        st = actor.status.state
+        if st == ateapi_pb2.ACTOR_STATE_RESUMING:
+            return STATUS_WAKING
+        if st == ateapi_pb2.ACTOR_STATE_RUNNING:
+            return STATUS_AWAKE
+        if st in (ateapi_pb2.ACTOR_STATE_SUSPENDING,
+                  ateapi_pb2.ACTOR_STATE_DELETING,
+                  ateapi_pb2.ACTOR_STATE_REVERTING):
+            return STATUS_SUSPENDING
+        if st == ateapi_pb2.ACTOR_STATE_CRASHED:
+            return STATUS_CRASHED
+        if st == ateapi_pb2.ACTOR_STATE_SUSPENDED:
+            # Asynchronous suspends leave the snapshot on the node first and
+            # upload it in the background: "napping" until the copy in object
+            # storage is COMPLETED, "suspended" (deep sleep) after.
+            latest = None
+            for snap in actor.status.snapshots:
+                if snap.owner != ateapi_pb2.SNAPSHOT_OWNER_ACTOR:
+                    continue
+                if latest is None or snap.generation > latest.generation:
+                    latest = snap
+            if latest is not None and (
+                latest.durable_snapshot.state
+                != ateapi_pb2.SNAPSHOT_STORAGE_STATE_COMPLETED
+            ):
+                return STATUS_NAPPING
+            return STATUS_SUSPENDED
+        return "unknown"
+
     async def list_actors(self) -> dict[str, dict]:
-        """{name: {"status": ..., "worker_pod": ...}} for the hotel atespace."""
+        """{name: {"status": ..., "worker_pod": ..., "crash": ...}} for the hotel."""
         import grpc
 
         from ateapipb import ateapi_pb2
 
-        await self.ensure_atespace()
         stub = await self._stub()
         md = await self._md()
-        names = {
-            ateapi_pb2.Actor.STATUS_RESUMING: "waking",
-            ateapi_pb2.Actor.STATUS_RUNNING: "awake",
-            ateapi_pb2.Actor.STATUS_SUSPENDING: "suspending",
-            ateapi_pb2.Actor.STATUS_SUSPENDED: "suspended",
-            ateapi_pb2.Actor.STATUS_PAUSING: "suspending",
-            ateapi_pb2.Actor.STATUS_PAUSED: "suspended",
-        }
         out: dict[str, dict] = {}
         try:
             page_token = ""
             while True:
                 resp = await stub.ListActors(
                     ateapi_pb2.ListActorsRequest(
-                        page_size=100, page_token=page_token, atespace=ATESPACE
+                        atespace=ATESPACE,
+                        options=ateapi_pb2.ListOptions(
+                            page_size=100, page_token=page_token
+                        ),
                     ),
                     metadata=md,
                 )
                 for actor in resp.actors:
-                    # Tip API: actor_id became metadata.name.
+                    st = actor.status
+                    pod = (st.worker_assignment.worker_pod
+                           if st.HasField("worker_assignment") else "")
                     out[actor.metadata.name] = {
-                        "status": names.get(actor.status, "unknown"),
-                        "worker_pod": actor.ateom_pod_name or None,
+                        "status": self._status_of(actor),
+                        "worker_pod": pod or None,
+                        "crash": st.crash.message if st.HasField("crash") else None,
                     }
                 page_token = resp.next_page_token
                 if not page_token:
@@ -259,44 +401,70 @@ class RealAteClient:
             raise self._wrap(e)
         return out
 
-    async def list_workers(self) -> list[dict]:
+    async def list_workers(self, actors: dict[str, dict] | None = None) -> list[dict]:
+        """The hotel's rooms: [{pod, node, occupant, capacity}].
+
+        Workers do not carry their assignment; occupancy is the inverse of
+        the actors' worker_assignment, so pass the list_actors() result in
+        (get_state already has it) to avoid a second round-trip.
+        """
         import grpc
 
         from ateapipb import ateapi_pb2
 
+        if actors is None:
+            actors = await self.list_actors()
+        occupant = {
+            a["worker_pod"]: n for n, a in actors.items() if a.get("worker_pod")
+        }
         stub = await self._stub()
+        md = await self._md()
+        workers: list[dict] = []
         try:
-            resp = await stub.ListWorkers(
-                ateapi_pb2.ListWorkersRequest(), metadata=await self._md()
-            )
+            page_token = ""
+            while True:
+                resp = await stub.ListWorkers(
+                    ateapi_pb2.ListWorkersRequest(
+                        options=ateapi_pb2.ListOptions(
+                            page_size=100, page_token=page_token
+                        )
+                    ),
+                    metadata=md,
+                )
+                for w in resp.workers:
+                    if w.worker_pool != WORKER_POOL:
+                        continue
+                    cap = w.status.capacity
+                    workers.append({
+                        "pod": w.worker_pod,
+                        "node": w.node_name,
+                        "occupant": occupant.get(w.worker_pod),
+                        "draining": (w.status.state
+                                     == ateapi_pb2.WORKER_STATE_DRAINING),
+                        "capacity": {"cpu_millicores": cap.cpu_millicores,
+                                     "memory_bytes": cap.memory_bytes},
+                    })
+                page_token = resp.next_page_token
+                if not page_token:
+                    break
         except grpc.aio.AioRpcError as e:
             raise self._wrap(e)
-        return [
-            {
-                "pod": w.worker_pod,
-                "node": w.node_name,
-                "occupant": (
-                    w.assignment.actor.name if w.HasField("assignment") else None
-                ),
-            }
-            for w in resp.workers
-            if w.worker_pool == WORKER_POOL
-        ]
+        return workers
 
     async def set_room_count(self, count: int) -> int:
         """Scale the hotel by patching the WorkerPool's replicas.
 
         The ate-controller reconciles the worker Deployment to the new size;
-        new rooms take a little while to warm up. Shrinking may evict an
-        awake guest's worker — its next message resumes it from a snapshot,
-        which is itself a nice demo of the mechanics.
+        new rooms take a little while to warm up. Shrinking evicts an awake
+        guest's worker — the plane suspends it on the way out and its next
+        message resumes it, which is itself a nice demo of the mechanics.
         """
         def _patch():
             from kubernetes import client, config
 
             config.load_incluster_config()
             client.CustomObjectsApi().patch_namespaced_custom_object(
-                group="ate.dev", version="v1alpha1",
+                group="ate.dev", version="v1",
                 namespace=os.environ.get("POD_NAMESPACE", "default"),
                 plural="workerpools", name=WORKER_POOL,
                 body={"spec": {"replicas": count}},
@@ -309,24 +477,40 @@ class RealAteClient:
         return count
 
     # -- data plane (resume-on-request) --------------------------------------
+    @staticmethod
+    def _ssl_context():
+        """mTLS to the router: verify its servicedns serving cert, present
+        this pod's PodCertificate. Built explicitly — httpx's `cert=` shortcut
+        did not present the client certificate (TLS 1.3 "certificate
+        required" from the router), an SSLContext does."""
+        import ssl
+
+        ctx = ssl.create_default_context(cafile=ATE_CA_FILE)
+        ctx.load_cert_chain(ATE_CLIENT_CERT_FILE)
+        return ctx
+
     def _http_client(self):
         import httpx
 
-        if self._http is None:
-            self._http = httpx.AsyncClient(timeout=CHAT_TIMEOUT_S)
+        now = time.monotonic()
+        if self._http is None or now - self._http_made_at > _HTTP_CLIENT_REFRESH_S:
+            # Rebuilt periodically: kubelet rotates the projected client
+            # certificate on disk and the SSL context loads it once.
+            self._http = httpx.AsyncClient(timeout=CHAT_TIMEOUT_S, verify=self._ssl_context())
+            self._http_made_at = now
         return self._http
 
     async def _router(self, method: str, name: str, path: str, json_body=None) -> dict:
         import httpx
 
-        host = f"{name}{ACTOR_HOST_SUFFIX}"
         # Retriable statuses, all pre-proxy (the guest never saw the message,
         # so a retry cannot duplicate a chat turn):
         #   421 — the guest's misdirect guard: the room still hosts its
         #         previous occupant (suspend/resume shuffle race);
         #   500/503 — resume failed or timed out in the router's ext_proc,
-        #         typically a cold image pull on that room's node; the pull
-        #         keeps going, so a later attempt succeeds from cache.
+        #         typically a cold image pull on that room's node, or no room
+        #         free yet; the pull keeps going / a room frees up, so a
+        #         later attempt succeeds.
         # 504 means the guest MAY have processed the message after the router
         # gave up — only idempotent GETs are safe to retry there.
         # Six attempts spanning ~30s of backoff: enough to ride out a full
@@ -335,12 +519,16 @@ class RealAteClient:
         attempts = 6
         for attempt in range(attempts):
             try:
-                # X-Actor-Name travels alongside Host because the router's
-                # Envoy rewrites Host to the upstream pod IP — the guest
-                # cannot learn its name from Host alone.
                 resp = await self._http_client().request(
                     method, ROUTER_URL.rstrip("/") + path,
-                    headers={"Host": host, "X-Actor-Name": name},
+                    headers={
+                        # Substrate's routing header: WHICH actor. Host stays
+                        # ordinary application metadata.
+                        "ate-target-actor": f"{ATESPACE}/{name}",
+                        # The guest's misdirect guard compares this with the
+                        # identity Substrate projected into its sandbox.
+                        "X-Actor-Name": name,
+                    },
                     json=json_body,
                 )
             except httpx.HTTPError as e:
@@ -395,19 +583,26 @@ class FakeAteClient:
     """In-memory hotel: N worker slots, per-guest agent state, zero deps.
 
     Mimics the observable semantics the concierge relies on:
-      * a guest occupies a worker slot while awake, none while suspended;
-      * chatting with a suspended guest transparently "resumes" it (onto any
+      * a guest occupies a worker slot while awake, none while asleep;
+      * a suspend is "napping" (snapshot on the node) until its upload lands
+        after `upload_latency` seconds, then "suspended" (durable);
+      * chatting with a sleeping guest transparently "resumes" it (onto any
         free slot, evicting nobody — resume waits for a free slot);
-      * RAM state (history, boot_id) survives suspend/resume.
+      * RAM state (history, boot_id) survives suspend/resume;
+      * a crashed guest is refused until reverted (RevertActor).
     """
 
-    def __init__(self, slots: int | None = None, resume_latency: float = 0.0):
+    def __init__(self, slots: int | None = None, resume_latency: float = 0.0,
+                 upload_latency: float = 0.0):
         if slots is None:
             slots = int(os.environ.get("WORKER_REPLICAS", "3"))
         self._next_slot = slots
         self.slots = [f"fake-worker-{i}" for i in range(slots)]
         self.resume_latency = resume_latency
-        self.actors: dict[str, dict] = {}  # name -> {status, worker, boot_id, history}
+        self.upload_latency = upload_latency
+        self.actors: dict[str, dict] = {}  # name -> {status, worker, boot_id, history, durable_at}
+        self.egress_policies: dict[str, list[dict]] = {}
+        self.templates: dict[str, dict] = {}
 
     def _free_slot(self) -> str | None:
         used = {a["worker"] for a in self.actors.values() if a["worker"]}
@@ -416,52 +611,85 @@ class FakeAteClient:
                 return s
         return None
 
-    async def ensure_atespace(self) -> None:
-        return None
+    def _status(self, actor: dict) -> str:
+        if actor["status"] == STATUS_NAPPING and time.monotonic() >= actor["durable_at"]:
+            actor["status"] = STATUS_SUSPENDED
+        return actor["status"]
 
-    async def create_actor(self, name: str, template_ns: str, template_name: str) -> None:
+    async def ensure_template(self, name: str, body: dict) -> str:
+        self.templates.setdefault(name, body)
+        return name
+
+    async def template_status(self, name: str) -> dict:
+        return {"golden_ready": True, "golden_tag": f"golden-{name}", "error": None}
+
+    async def create_actor(self, name: str, template_name: str) -> None:
         if name in self.actors:
             return
         slot = self._free_slot()
         if slot is None:
             raise AteError(409, "no free worker slot")
         self.actors[name] = {
-            "status": "awake",
+            "status": STATUS_AWAKE,
             "worker": slot,
             "boot_id": uuid.uuid4().hex[:12],
             "history": [],
+            "durable_at": 0.0,
+            "crash": None,
         }
 
-    async def suspend_actor(self, name: str) -> bool:
+    async def ensure_egress_policy(self, name: str, rules: list[dict]) -> None:
+        if name not in self.actors:
+            raise AteError(404, f"actor {name} not found")
+        self.egress_policies.setdefault(name, rules)
+
+    async def suspend_actor(self, name: str, durable: bool = False) -> bool:
         actor = self.actors.get(name)
-        if actor is None or actor["status"] != "awake":
+        if actor is None or actor["status"] != STATUS_AWAKE:
             return False
-        actor["status"] = "suspended"
         actor["worker"] = None
+        if durable or self.upload_latency <= 0:
+            actor["status"] = STATUS_SUSPENDED
+        else:
+            actor["status"] = STATUS_NAPPING
+            actor["durable_at"] = time.monotonic() + self.upload_latency
+        return True
+
+    def crash(self, name: str, message: str = "sandbox died") -> None:
+        """Test hook: what the plane does when a restore/checkpoint fails."""
+        actor = self.actors[name]
+        actor["status"] = STATUS_CRASHED
+        actor["worker"] = None
+        actor["crash"] = message
+
+    async def revert_actor(self, name: str) -> bool:
+        actor = self.actors.get(name)
+        if actor is None or actor["status"] not in (STATUS_CRASHED, STATUS_AWAKE,
+                                                    STATUS_NAPPING):
+            return False
+        actor["status"] = STATUS_SUSPENDED
+        actor["worker"] = None
+        actor["crash"] = None
         return True
 
     async def delete_actor(self, name: str) -> None:
-        # Mirror the real plane: a RUNNING actor is refused — callers must
-        # suspend first (see the concierge's _delete_actor_hard).
-        actor = self.actors.get(name)
-        if actor is not None and actor["status"] == "awake":
-            raise AteError(
-                409, f"Actor {name} is not suspended (status: STATUS_RUNNING)"
-            )
         self.actors.pop(name, None)
+        self.egress_policies.pop(name, None)
 
     async def list_actors(self) -> dict[str, dict]:
         return {
-            n: {"status": a["status"], "worker_pod": a["worker"]}
+            n: {"status": self._status(a), "worker_pod": a["worker"], "crash": a["crash"]}
             for n, a in self.actors.items()
         }
 
-    async def list_workers(self) -> list[dict]:
+    async def list_workers(self, actors: dict[str, dict] | None = None) -> list[dict]:
         occupants = {
             a["worker"]: n for n, a in self.actors.items() if a["worker"]
         }
         return [
-            {"pod": s, "node": "fake-node", "occupant": occupants.get(s)}
+            {"pod": s, "node": "fake-node", "occupant": occupants.get(s),
+             "draining": False,
+             "capacity": {"cpu_millicores": 1000, "memory_bytes": 1 << 30}}
             for s in self.slots
         ]
 
@@ -478,7 +706,7 @@ class FakeAteClient:
             self.slots.remove(victim)
             for actor in self.actors.values():
                 if actor["worker"] == victim:
-                    actor["status"] = "suspended"
+                    actor["status"] = STATUS_SUSPENDED
                     actor["worker"] = None
         return len(self.slots)
 
@@ -486,7 +714,10 @@ class FakeAteClient:
         actor = self.actors.get(name)
         if actor is None:
             raise AteError(404, f"guest {name} is not checked in")
-        if actor["status"] == "suspended":
+        if actor["status"] == STATUS_CRASHED:
+            # The router refuses to resume a crashed actor (FAILED_PRECONDITION).
+            raise AteError(502, f"router returned 503 for {name}: actor is crashed")
+        if self._status(actor) in ASLEEP_STATES:
             # Resume-on-request: wait for a free slot, restore RAM as-is.
             deadline = time.monotonic() + 5.0
             slot = self._free_slot()
@@ -497,7 +728,7 @@ class FakeAteClient:
                 raise AteError(503, "no free worker slot to resume onto")
             if self.resume_latency:
                 await asyncio.sleep(self.resume_latency)
-            actor["status"] = "awake"
+            actor["status"] = STATUS_AWAKE
             actor["worker"] = slot
         return actor
 

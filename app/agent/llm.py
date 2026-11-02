@@ -1,13 +1,16 @@
 """LLM access for a hotel guest.
 
 Modes (env LLM_MODE):
-  direct  — call Gemini on Vertex AI with Application Default Credentials
-            (Workload Identity). The whole point of ADC here: no key is ever
-            frozen into a Substrate snapshot; a fresh token is fetched from
-            the metadata server after every resume.
-  proxy   — POST to the concierge's /llm endpoint (fallback when the metadata
-            server is unreachable from inside the gVisor sandbox).
-  canned  — deterministic scripted persona replies (offline / tests / no GCP).
+  gemini  — call the Gemini API. The guest holds NO credential: it sends the
+            `x-goog-api-key` header with a placeholder, and Substrate's egress
+            gateway — which terminates the guest's TLS for this one hostname
+            and is the only component allowed to read the Secret — replaces
+            it with the real key on the way out. Nothing secret is ever in
+            the sandbox, so nothing secret is ever in a snapshot.
+  proxy   — POST to the concierge's /llm endpoint (the concierge holds the
+            key as an ordinary env var; a fallback when the gateway path is
+            not configured).
+  canned  — deterministic scripted persona replies (offline / tests / no key).
 
 `google-genai` and `httpx` are imported lazily so the offline test suite needs
 neither installed.
@@ -22,28 +25,25 @@ from app import personas
 
 logger = logging.getLogger(__name__)
 
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
 
 _client = None
 _client_lock = threading.Lock()
 # After a failed init, don't retry before this monotonic instant. A transient
-# failure (metadata server hiccup right after a resume) must not permanently
-# downgrade the guest to canned replies — the process lives across many
-# suspend/resume cycles.
+# failure must not permanently downgrade the guest to canned replies — the
+# process lives across many suspend/resume cycles.
 _client_retry_at = 0.0
 _CLIENT_RETRY_S = float(os.environ.get("LLM_INIT_RETRY_S", "60"))
 
 
 def _mode() -> str:
     mode = os.environ.get("LLM_MODE", "").strip().lower()
-    if mode in ("direct", "proxy", "canned"):
+    if mode in ("gemini", "proxy", "canned"):
         return mode
-    # Default: direct when Vertex is configured, canned otherwise.
-    use_vertex = os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").upper() == "TRUE"
-    return "direct" if use_vertex else "canned"
+    return "gemini" if os.environ.get("GEMINI_API_KEY") else "canned"
 
 
-def _vertex_client():
+def _gemini_client():
     """Lazily build one genai client per process (thread-safe).
 
     Failed inits are retried after _CLIENT_RETRY_S rather than latched off.
@@ -59,15 +59,13 @@ def _vertex_client():
         try:
             from google import genai  # lazy: not needed offline
 
-            _client = genai.Client(
-                vertexai=True,
-                project=os.environ.get("GOOGLE_CLOUD_PROJECT"),
-                location=os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1"),
-            )
-            logger.info("Gemini client initialized (Vertex AI, ADC)")
+            # The key is whatever the environment says — inside a Substrate
+            # sandbox that is a placeholder the egress gateway replaces.
+            _client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY", "unset"))
+            logger.info("Gemini client initialized")
         except Exception:
             logger.warning(
-                "Vertex AI client init failed; canned replies for the next "
+                "Gemini client init failed; canned replies for the next "
                 "%.0fs, then retry", _CLIENT_RETRY_S, exc_info=True,
             )
             _client_retry_at = time.monotonic() + _CLIENT_RETRY_S
@@ -84,21 +82,31 @@ def _transcript(persona: personas.Persona, history: list[dict], message: str) ->
     return "\n".join(lines)
 
 
-def _direct_reply(name: str, message: str, history: list[dict]) -> str | None:
-    client = _vertex_client()
+# A brand-new guest's first call can race its EgressPolicy: Substrate's DNS
+# relay picks a new policy up within ~5 s, and until then the Gemini host
+# resolves to NXDOMAIN. One short retry covers that (and other blips).
+_GEMINI_RETRY_S = float(os.environ.get("GEMINI_RETRY_S", "3"))
+
+
+def _gemini_reply(name: str, message: str, history: list[dict]) -> str | None:
+    client = _gemini_client()
     if client is None:
         return None
     persona = personas.get(name)
-    try:
-        resp = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=_transcript(persona, history, message),
-        )
-        text = (resp.text or "").strip()
-        return text or None
-    except Exception:
-        logger.warning("Gemini generate_content failed", exc_info=True)
-        return None
+    for attempt in range(2):
+        try:
+            resp = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=_transcript(persona, history, message),
+            )
+            text = (resp.text or "").strip()
+            return text or None
+        except Exception:
+            logger.warning("Gemini generate_content failed (attempt %d)", attempt + 1,
+                           exc_info=True)
+            if attempt == 0:
+                time.sleep(_GEMINI_RETRY_S)
+    return None
 
 
 def _proxy_reply(name: str, message: str, history: list[dict]) -> str | None:
@@ -124,8 +132,8 @@ def reply(name: str, message: str, history: list[dict]) -> str:
     """In-persona reply; always returns something (canned as last resort)."""
     mode = _mode()
     text = None
-    if mode == "direct":
-        text = _direct_reply(name, message, history)
+    if mode == "gemini":
+        text = _gemini_reply(name, message, history)
     elif mode == "proxy":
         text = _proxy_reply(name, message, history)
     if text is None:

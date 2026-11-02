@@ -154,5 +154,5 @@ def canned_reply(name: str, message: str, history: list[dict]) -> str:
     return (
         f"{persona.emoji} {persona.name.capitalize()} ({persona.tagline}) here — "
         f"reply #{n} to “{message}”.{memory} "
-        "(Vertex AI is not configured, so this is my scripted voice.)"
+        "(No Gemini key is configured, so this is my scripted voice.)"
     )

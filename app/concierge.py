@@ -2,8 +2,9 @@
 
 Responsibilities:
   * serve the hotel floor-plan UI (frontend/) and the /api endpoints;
-  * drive Substrate's control plane: check guests in (CreateActor), tuck idle
-    guests away (SuspendActor), reset the hotel (DeleteActor);
+  * drive Substrate's control plane: check guests in (CreateActor + their
+    EgressPolicy), tuck idle guests away (SuspendActor), rewind crashed ones
+    (RevertActor), reset the hotel (DeleteActor);
   * relay chat to a guest BY NAME through the atenet-router data path — the
     concierge never knows (or cares) which worker pod the guest is on, and a
     suspended guest is transparently resumed by the router;
@@ -34,7 +35,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app import ate_client, personas
-from app.ate_client import AteError
+from app.ate_client import ASLEEP_STATES, AteError
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -224,14 +225,21 @@ async def healthz():
 # --- Hotel state ------------------------------------------------------------
 @app.get("/api/state")
 async def get_state():
+    effective_template = template_name or (
+        "guest-fake" if isinstance(ate, ate_client.FakeAteClient) else None
+    )
     try:
         actors = await ate.list_actors()
-        workers = await ate.list_workers()
+        workers = await ate.list_workers(actors)
+        golden = (
+            await ate.template_status(effective_template)
+            if effective_template else None
+        )
     except AteError as e:
         raise HTTPException(status_code=e.status, detail=e.detail)
 
     guests = []
-    n_awake = n_suspended = 0
+    n_awake = n_suspended = n_napping = n_crashed = 0
     for p in _active_personas(actors):
         actor = actors.get(p.name)
         if actor is None:
@@ -242,17 +250,22 @@ async def get_state():
             status = actor["status"]
         if status in ("awake", "waking", "suspending"):
             n_awake += 1
+        elif status == "napping":
+            n_napping += 1
         elif status == "suspended":
             n_suspended += 1
+        elif status == "crashed":
+            n_crashed += 1
         guests.append({
             "name": p.name,
             "emoji": p.emoji,
             "tagline": p.tagline,
             "status": status,
             "worker_pod": actor["worker_pod"] if actor else None,
+            "crash": actor.get("crash") if actor else None,
         })
 
-    checked_in = n_awake + n_suspended
+    checked_in = n_awake + n_napping + n_suspended + n_crashed
     n_workers = len(workers)
     return {
         "guests": guests,
@@ -263,13 +276,44 @@ async def get_state():
             "roster": len(personas.PERSONAS),
             "workers": n_workers,
             "awake": n_awake,
+            "napping": n_napping,
             "suspended": n_suspended,
+            "crashed": n_crashed,
             "oversubscription": round(checked_in / n_workers, 1) if n_workers else 0,
         },
-        "template": template_name or ("guest-fake" if isinstance(
-            ate, ate_client.FakeAteClient) else None),
+        "template": effective_template,
         "template_error": template_error,
+        # Golden-snapshot readiness: new guests check in from it instantly;
+        # until it exists a first chat cold-boots the image (slower), and a
+        # failed build means every check-in fails — the UI shows both.
+        "golden": golden,
     }
+
+
+# Guests this replica has confirmed an EgressPolicy for (ensure is cheap and
+# idempotent, but not free: one RPC per chat otherwise).
+policy_ok: set[str] = set()
+
+
+async def _ensure_policy(name: str) -> None:
+    """A Substrate actor reaches nothing until it has an EgressPolicy (deny by
+    default, down to DNS). Ensure it exists before any traffic — and keep
+    ensuring on later chats, so a guest whose policy creation once failed
+    (or that another replica created) never stays mute."""
+    from app import template_manager
+
+    if name in policy_ok:
+        return
+    await ate.ensure_egress_policy(name, template_manager.egress_rules(POD_NAMESPACE))
+    policy_ok.add(name)
+
+
+async def _check_in(name: str, template: str) -> None:
+    """CreateActor + its EgressPolicy, in that order and before any traffic:
+    the policy goes in right behind the actor, before the first chat resumes
+    it and the guest calls Gemini."""
+    await ate.create_actor(name, template)
+    await _ensure_policy(name)
 
 
 # --- Chat (the resume-on-request path) ---------------------------------------
@@ -278,9 +322,20 @@ async def chat(name: str, body: ChatIn):
     name = _valid_guest(name)
     try:
         actors = await ate.list_actors()
-        was_suspended = actors.get(name, {}).get("status") == "suspended"
+        slept_as = actors.get(name, {}).get("status")
+        was_suspended = slept_as in ASLEEP_STATES
         if name not in actors:
-            await ate.create_actor(name, POD_NAMESPACE, _template())
+            await _check_in(name, _template())
+        else:
+            await _ensure_policy(name)
+        if slept_as == "crashed":
+            # A failed restore or an over-limit sandbox leaves the actor
+            # CRASHED, and the router refuses to resume it. RevertActor
+            # rewinds it to its last durable snapshot — the conversation up
+            # to that point survives — and the chat below wakes it from there.
+            if await ate.revert_actor(name):
+                was_suspended, slept_as = True, "crashed"
+                logger.info("reverted crashed guest %s to its last snapshot", name)
         activity[name] = time.monotonic()
         if was_suspended:
             waking[name] = True
@@ -297,7 +352,10 @@ async def chat(name: str, body: ChatIn):
         activity[name] = time.monotonic()
     except AteError as e:
         raise HTTPException(status_code=e.status, detail=e.detail)
+    # was_suspended: the guest was asleep (either tier) and the router restored
+    # it for this message; slept_as says which tier it woke from.
     result["was_suspended"] = was_suspended
+    result["slept_as"] = slept_as if was_suspended else None
     return result
 
 
@@ -308,6 +366,13 @@ async def history(name: str):
         actors = await ate.list_actors()
         if name not in actors:
             return {"guest": name, "boot_id": None, "history": []}
+        status = actors[name]["status"]
+        if status in ASLEEP_STATES:
+            # Reading history goes through the router, which would RESUME the
+            # guest (and occupy a room) just to render a drawer. The UI keeps
+            # its own transcript; the guest's RAM copy comes back on its next
+            # message.
+            return {"guest": name, "boot_id": None, "history": [], "asleep": status}
         activity[name] = time.monotonic()
         return await ate.history(name)
     except AteError as e:
@@ -327,7 +392,7 @@ async def open_hotel():
         async def one(guest: str):
             async with sem:
                 try:
-                    await ate.create_actor(guest, POD_NAMESPACE, template)
+                    await _check_in(guest, template)
                     # Backdate activity so the sweeper tucks them in promptly.
                     activity.setdefault(
                         guest, time.monotonic() - SWEEP_IDLE_SECONDS + 5
@@ -376,21 +441,15 @@ async def set_rooms(body: RoomsIn):
 async def _delete_actor_hard(guest: str) -> str | None:
     """Delete an actor whatever state it is in; returns an error or None.
 
-    The plane only deletes settled actors — a RUNNING guest must be suspended
-    first, and a SUSPENDING/RESUMING one needs a moment to settle — so nudge
-    with suspend and retry briefly instead of surfacing a transient 409.
+    DeleteActor terminates a running sandbox, releases the room and collects
+    the actor's snapshots — exactly what Reset means. A guest caught
+    mid-transition can still answer a transient 409; retry briefly.
     """
     last = None
     for _ in range(10):
         try:
             await ate.delete_actor(guest)
             return None
-        except AteError as e:
-            last = e
-        try:
-            if await ate.suspend_actor(guest):
-                await ate.delete_actor(guest)
-                return None
         except AteError as e:
             last = e
         await asyncio.sleep(1.5)
@@ -407,13 +466,14 @@ async def reset_hotel():
     activity.clear()
     waking.clear()
     in_flight.clear()
+    policy_ok.clear()
     return {"action": "reset", "errors": errors}
 
 
 # --- Guest-facing internal endpoints (cluster network, not the Gateway) -------
 @app.post("/internal/yield")
 async def guest_yield(body: YieldIn):
-    """A guest says it's idle. Suspend it — but only if the concierge agrees.
+    """A guest says it's idle. Tuck it in — but only if the concierge agrees.
 
     Spoof-tolerant: anything on the cluster network can POST here, but the
     suspend only happens when our own activity record confirms the guest has
@@ -426,17 +486,21 @@ async def guest_yield(body: YieldIn):
     if last is not None and time.monotonic() - last < LINGER_SECONDS:
         return {"guest": name, "suspended": False, "reason": "recent activity"}
     try:
+        # Asynchronous suspend: the room is free as soon as the snapshot is
+        # on the node ("napping"); atelet uploads it to GCS in the background
+        # ("suspended", wakes anywhere).
         suspended = await ate.suspend_actor(name)
     except AteError as e:
         raise HTTPException(status_code=e.status, detail=e.detail)
     if suspended:
-        logger.info("guest %s yielded — suspended to snapshot", name)
+        logger.info("guest %s yielded — room freed, snapshot uploading", name)
     return {"guest": name, "suspended": suspended}
 
 
 @app.post("/llm")
 async def llm_proxy(body: LlmIn):
-    """Fallback LLM path for guests whose sandbox can't reach Vertex (ADC).
+    """Fallback LLM path (LLM_MODE=proxy in the guests): the concierge calls
+    Gemini with its own key when the egress-injection path is not configured.
 
     The concierge is a normal pod where ADC just works; the guest sends its
     own history, so the concierge stays stateless about conversations.
@@ -473,7 +537,7 @@ _idlez_failures: dict[str, int] = {}
 
 
 async def _sweeper():
-    """Suspend guests idle > SWEEP_IDLE_SECONDS.
+    """Tuck in guests idle > SWEEP_IDLE_SECONDS.
 
     The backstop behind guest-initiated yields — and the mechanism that frees
     a room when all workers are busy and a sleeping guest gets a message.
@@ -486,42 +550,51 @@ async def _sweeper():
     """
     while True:
         await asyncio.sleep(SWEEP_INTERVAL_S)
-        try:
-            actors = await ate.list_actors()
-        except AteError:
+        await _sweep_once()
+
+
+async def _sweep_once() -> None:
+    try:
+        actors = await ate.list_actors()
+    except AteError:
+        return
+    now = time.monotonic()
+    for name, actor in actors.items():
+        # Only the hotel's guests. The template controller builds each
+        # golden snapshot from a temporary actor in THIS atespace (named
+        # after the template UID); suspending it would break the build.
+        if name not in personas.BY_NAME:
             continue
-        now = time.monotonic()
-        for name, actor in actors.items():
-            if actor["status"] != "awake" or waking.get(name) or in_flight.get(name):
+        if actor["status"] != "awake" or waking.get(name) or in_flight.get(name):
+            continue
+        last = activity.get(name)
+        if last is not None and now - last < SWEEP_IDLE_SECONDS:
+            continue
+        try:
+            idle = await ate.idlez(name)
+            _idlez_failures.pop(name, None)
+            busy = idle.get("in_flight", 0) > 0 or (
+                idle.get("idle_s") is not None
+                and idle["idle_s"] < LINGER_SECONDS
+            )
+            if busy:
+                activity[name] = now  # remember what we learned locally
                 continue
-            last = activity.get(name)
-            if last is not None and now - last < SWEEP_IDLE_SECONDS:
+        except AteError as e:
+            # Unreachable guests get a few sweeps' grace (a just-restored
+            # listener may still be warming up), then are reaped as wedged.
+            n = _idlez_failures.get(name, 0) + 1
+            _idlez_failures[name] = n
+            if n < 3:
+                logger.info("sweeper: %s unreachable (%d/3): %s",
+                            name, n, e.detail)
                 continue
-            try:
-                idle = await ate.idlez(name)
+        try:
+            if await ate.suspend_actor(name):
                 _idlez_failures.pop(name, None)
-                busy = idle.get("in_flight", 0) > 0 or (
-                    idle.get("idle_s") is not None
-                    and idle["idle_s"] < LINGER_SECONDS
-                )
-                if busy:
-                    activity[name] = now  # remember what we learned locally
-                    continue
-            except AteError as e:
-                # Unreachable guests get a few sweeps' grace (a just-restored
-                # listener may still be warming up), then are reaped as wedged.
-                n = _idlez_failures.get(name, 0) + 1
-                _idlez_failures[name] = n
-                if n < 3:
-                    logger.info("sweeper: %s unreachable (%d/3): %s",
-                                name, n, e.detail)
-                    continue
-            try:
-                if await ate.suspend_actor(name):
-                    _idlez_failures.pop(name, None)
-                    logger.info("sweeper tucked %s in", name)
-            except AteError as e:
-                logger.warning("sweeper suspend %s failed: %s", name, e.detail)
+                logger.info("sweeper tucked %s in", name)
+        except AteError as e:
+            logger.warning("sweeper tuck-in %s failed: %s", name, e.detail)
 
 
 async def _ensure_template_loop():
@@ -535,12 +608,19 @@ async def _ensure_template_loop():
 
     while template_name is None:
         try:
-            template_name = await asyncio.to_thread(
-                template_manager.ensure_template_sync, POD_NAMESPACE
+            image_ref = await asyncio.to_thread(
+                template_manager.read_own_image_ref_sync
             )
-            template_error = None
-            if template_name is None:
+            if image_ref is None:
                 template_error = "own image digest not visible yet"
+            else:
+                body = template_manager.build_template_body(
+                    "pending", POD_NAMESPACE, image_ref
+                )
+                name = template_manager.template_name_for(image_ref, body)
+                body["metadata"]["name"] = name
+                template_name = await ate.ensure_template(name, body)
+                template_error = None
         except Exception as e:  # keep retrying; surface the cause in /api/state
             template_error = f"ActorTemplate registration failing: {e}"
             logger.warning(template_error, exc_info=True)

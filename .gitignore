@@ -218,3 +218,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Agent Hotel: repo-local tools (kubectl-ate) and ate-setup install records
+.tools/
+.ate-setup/

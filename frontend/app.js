@@ -7,18 +7,45 @@ const $ = (id) => document.getElementById(id);
 
 const STATUS_LABEL = {
   awake: "🟢 awake",
-  suspended: "💤 sleeping in GCS",
+  napping: "😴 asleep (snapshot on the node, uploading…)",
+  suspended: "💤 asleep (snapshot in GCS)",
   suspending: "🌙 falling asleep…",
-  waking: "⏳ waking (restoring checkpoint)…",
+  waking: "⏳ waking (restoring snapshot)…",
   vacant: "🚪 not checked in",
+  crashed: "💥 crashed — will be rewound on your next message",
   unknown: "❔ unknown",
 };
 
-let currentGuest = null;      // open chat drawer
-let chatBusy = false;
-let lastBootIds = {};         // guest -> boot_id we last saw (memory proof)
-let roomCount = 0;            // last worker count seen (for +/- Room)
-let bannerTimer = null;       // transient banner display (addBanner)
+// --- Client-side conversation state --------------------------------------------
+// Transcripts live in the BROWSER (localStorage), one per guest, so opening a
+// drawer never has to wake a sleeping guest just to show text. The guest's
+// own copy lives in its RAM — that is what the resume proof is about — and is
+// reconciled from /history only while the guest is awake.
+// Several conversations can be in flight at once (one room each); switching
+// guests never blocks on a pending reply.
+const LS_KEY = "agent-hotel-transcripts-v1";
+let transcripts = {};          // guest -> [{cls, text}]
+try { transcripts = JSON.parse(localStorage.getItem(LS_KEY) || "{}"); } catch { transcripts = {}; }
+const pending = {};            // guest -> {text, since, note} while a reply is in flight
+let currentGuest = null;       // guest shown in the drawer
+let lastBootIds = {};          // guest -> boot_id we last saw (memory proof)
+let lastStatus = {};           // guest -> status from the last poll
+let roomCount = 0;             // last worker count seen (for +/- Room)
+let bannerTimer = null;        // transient banner display (addBanner)
+let pollFailures = 0;          // consecutive /api/state failures
+let lastState = null;
+
+function saveTranscripts() {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(transcripts)); } catch {}
+}
+function transcript(guest) {
+  return (transcripts[guest] = transcripts[guest] || []);
+}
+function record(guest, cls, text) {
+  transcript(guest).push({ cls, text });
+  saveTranscripts();
+  if (guest === currentGuest) renderDrawer();
+}
 
 function esc(s) {
   const div = document.createElement("div");
@@ -27,18 +54,21 @@ function esc(s) {
 }
 
 async function api(path, opts) {
-  // The public LB occasionally 502/503s a request the concierge NEVER saw
-  // (its shared backend-connection pool gets churned by internet scanners;
-  // "backend_connection_closed_before_data_sent"). Those responses carry the
-  // LB's plain-text body — retry them, they were not delivered. Real errors
-  // from the concierge carry a JSON {detail} and surface immediately.
+  // The public LB occasionally answers 502/503 for a request the concierge
+  // NEVER saw: its backend-connection pool gets churned by internet scanners
+  // ("backend_connection_closed_before_data_sent"), and the GKE Gateway
+  // controller's periodic re-syncs open ~10-60 s "no healthy upstream"
+  // windows. Those responses carry the LB's plain-text body — retry them
+  // with backoff, they were not delivered. Real errors from the concierge
+  // carry a JSON {detail} and surface immediately.
+  const attempts = 6;
   let resp;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt) await new Promise((r) => setTimeout(r, 600 * attempt));
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    if (attempt) await new Promise((r) => setTimeout(r, Math.min(8000, 700 * 2 ** (attempt - 1))));
     try {
       resp = await fetch(path, opts);
     } catch (e) {
-      if (attempt === 2) throw e;   // network-level failure: retry too
+      if (attempt === attempts - 1) throw e;   // network-level failure: retry too
       continue;
     }
     if (resp.status < 500) break;
@@ -56,6 +86,7 @@ async function api(path, opts) {
   return resp.json();
 }
 
+// --- Floor plan ---------------------------------------------------------------------
 function renderRooms(workers) {
   $("rooms").innerHTML = workers.length
     ? workers.map((w, i) => `
@@ -68,15 +99,22 @@ function renderRooms(workers) {
 }
 
 function renderGuests(guests) {
-  $("guests").innerHTML = guests.map((g) => `
-    <div class="guest ${g.status}" data-guest="${g.name}">
+  $("guests").innerHTML = guests.map((g) => {
+    const busy = pending[g.name];
+    const line = busy
+      ? `<span class="dot waking"></span>💬 replying… (${Math.round((Date.now() - busy.since) / 1000)} s)`
+      : `<span class="dot ${g.status}"></span>${STATUS_LABEL[g.status] || g.status}`;
+    const turns = (transcripts[g.name] || []).filter((m) => m.cls === "user").length;
+    return `
+    <div class="guest ${g.status} ${busy ? "pending" : ""} ${g.name === currentGuest ? "selected" : ""}" data-guest="${g.name}">
       <div class="top"><span class="emoji">${g.emoji}</span>
         <div><div class="name">${esc(g.name)}</div>
         <div class="tagline">${esc(g.tagline)}</div></div>
       </div>
-      <div class="status"><span class="dot ${g.status}"></span>${STATUS_LABEL[g.status] || g.status}</div>
-      <div class="worker">${g.worker_pod ? "in " + esc(g.worker_pod) : "&nbsp;"}</div>
-    </div>`).join("");
+      <div class="status">${line}</div>
+      <div class="worker">${g.worker_pod ? "in " + esc(g.worker_pod) : (turns ? `${turns} message${turns > 1 ? "s" : ""} so far` : "&nbsp;")}</div>
+    </div>`;
+  }).join("");
   document.querySelectorAll(".guest").forEach((el) =>
     el.addEventListener("click", () => openDrawer(el.dataset.guest)));
 }
@@ -85,7 +123,9 @@ function renderMeter(m) {
   $("m-checkedin").textContent = `${m.checked_in}/${m.capacity}`;
   $("m-workers").textContent = m.workers;
   $("m-awake").textContent = m.awake;
+  $("m-napping").textContent = m.napping ?? 0;
   $("m-suspended").textContent = m.suspended;
+  $("m-crashed").textContent = m.crashed ?? 0;
   // "Compute saved" = guests who exist but hold no room right now.
   const saved = m.checked_in > 0 && m.workers > 0
     ? Math.max(0, Math.round(100 * (1 - Math.min(m.workers, m.checked_in) / m.checked_in)))
@@ -93,98 +133,141 @@ function renderMeter(m) {
   $("m-saved").textContent = `${saved}%`;
 }
 
+function showBanner(text, cls) {
+  const banner = $("banner");
+  banner.textContent = text;
+  banner.className = `banner ${cls || ""}`;
+}
+function hideBanner() { $("banner").className = "banner hidden"; }
+
 async function refresh() {
+  let s;
   try {
-    const s = await api("/api/state");
-    roomCount = s.workers.length;
-    renderRooms(s.workers);
-    renderGuests(s.guests);
-    renderMeter(s.meter);
-    $("btn-add-guest").disabled = s.meter.capacity >= s.meter.roster;
-    const banner = $("banner");
-    if (s.template_error) {
-      banner.textContent = `⚠ ${s.template_error}`;
-      banner.classList.remove("hidden");
-    } else if (!bannerTimer) {
-      banner.classList.add("hidden");
-    }
+    s = await api("/api/state");
+    pollFailures = 0;
   } catch (e) {
-    const banner = $("banner");
-    banner.textContent = `⚠ cannot reach the concierge: ${e.message}`;
-    banner.classList.remove("hidden");
+    pollFailures += 1;
+    // One failed poll is noise (LB re-sync); only say so after a few, and
+    // keep showing the last known floor plan meanwhile.
+    if (pollFailures >= 3) showBanner(`⚠ reconnecting to the concierge… (${e.message})`);
+    return;
   }
+  lastState = s;
+  roomCount = s.workers.length;
+  s.guests.forEach((g) => { lastStatus[g.name] = g.status; });
+  renderRooms(s.workers);
+  renderGuests(s.guests);
+  renderMeter(s.meter);
+  $("btn-add-guest").disabled = s.meter.capacity >= s.meter.roster;
+  if (s.template_error) {
+    showBanner(`⚠ ${s.template_error}`);
+  } else if (s.golden && s.golden.error) {
+    // The template exists but Substrate could not build its golden
+    // snapshot — every check-in will fail until a new image is deployed.
+    showBanner(`⚠ golden snapshot failed: ${s.golden.error}`);
+  } else if (s.golden && !s.golden.golden_ready) {
+    showBanner("⏳ building the guests' golden snapshot — first check-ins cold-boot until it is ready");
+  } else if (!bannerTimer) {
+    hideBanner();
+  }
+  if (currentGuest) renderDrawerMeta();
 }
 
 // --- Chat drawer -----------------------------------------------------------
-function addMsg(cls, text) {
+function renderDrawer() {
+  const log = $("chat-log");
+  log.innerHTML = "";
+  const guest = currentGuest;
+  const msgs = transcripts[guest] || [];
+  if (!msgs.length) addMsgEl("system", "No conversation yet — say hello!");
+  msgs.forEach((m) => addMsgEl(m.cls, m.text));
+  const busy = pending[guest];
+  if (busy) addMsgEl("system", busy.note || "…");
+  log.scrollTop = log.scrollHeight;
+}
+function addMsgEl(cls, text) {
   const div = document.createElement("div");
   div.className = `msg ${cls}`;
   div.textContent = text;
   $("chat-log").appendChild(div);
-  $("chat-log").scrollTop = $("chat-log").scrollHeight;
+}
+function renderDrawerMeta() {
+  const guest = currentGuest;
+  const st = lastStatus[guest];
+  const boot = lastBootIds[guest];
+  const bits = [];
+  if (st && STATUS_LABEL[st]) bits.push(STATUS_LABEL[st]);
+  if (boot) bits.push(`boot_id ${boot}`);
+  $("drawer-meta").textContent = bits.join(" · ");
 }
 
 async function openDrawer(guest) {
   currentGuest = guest;
   $("drawer-title").textContent = guest;
-  $("drawer-meta").textContent = "";
-  $("chat-log").innerHTML = "";
   $("drawer").classList.remove("hidden");
-  try {
-    const h = await api(`/api/guests/${guest}/history`);
-    (h.history || []).forEach((m) =>
-      addMsg(m.role === "user" ? "user" : "agent", m.text));
-    if (h.boot_id) $("drawer-meta").textContent = `boot_id ${h.boot_id}`;
-    if (!h.history || !h.history.length)
-      addMsg("system", "No conversation yet — say hello!");
-  } catch (e) {
-    addMsg("system", `history unavailable: ${e.message}`);
-  }
+  renderDrawer();
+  renderDrawerMeta();
+  if (lastState) renderGuests(lastState.guests);
   $("chat-input").focus();
+  // Reconcile with the guest's own RAM copy — only if it is awake (the
+  // concierge refuses to wake a sleeper for this, and so do we).
+  if (lastStatus[guest] === "awake") {
+    try {
+      const h = await api(`/api/guests/${guest}/history`);
+      if (h.history && h.history.length && !pending[guest]) {
+        transcripts[guest] = h.history.map((m) =>
+          ({ cls: m.role === "user" ? "user" : "agent", text: m.text }));
+        saveTranscripts();
+        if (h.boot_id) lastBootIds[guest] = h.boot_id;
+        if (currentGuest === guest) { renderDrawer(); renderDrawerMeta(); }
+      }
+    } catch { /* the local transcript stands */ }
+  }
 }
 
 async function sendChat(ev) {
   ev.preventDefault();
   const text = $("chat-input").value.trim();
-  if (!text || !currentGuest || chatBusy) return;
   const guest = currentGuest;
-  chatBusy = true;
-  $("chat-send").disabled = true;
+  if (!text || !guest) return;
+  if (pending[guest]) { addBanner(`${guest} is still replying — pick another guest meanwhile`); return; }
   $("chat-input").value = "";
-  addMsg("user", text);
-  const wakeNote = document.createElement("div");
-  wakeNote.className = "msg system";
-  wakeNote.textContent = "…";
-  $("chat-log").appendChild(wakeNote);
-  // If the guest is asleep, the router restores its checkpoint first (~30 s).
-  const timer = setTimeout(() => {
-    wakeNote.textContent = `💤 → waking ${guest}… restoring checkpoint from GCS (~30 s)`;
-  }, 1500);
+  record(guest, "user", text);
+  const asleep = ["napping", "suspended", "crashed"].includes(lastStatus[guest]);
+  pending[guest] = {
+    text, since: Date.now(),
+    note: asleep
+      ? (lastStatus[guest] === "napping"
+          ? `😴 → waking ${guest} (snapshot still on its node, ~1 s)…`
+          : lastStatus[guest] === "crashed"
+            ? `💥 → rewinding ${guest} to its last snapshot, then waking it…`
+            : `💤 → waking ${guest} (restoring from GCS, a few seconds)…`)
+      : "…",
+  };
+  renderDrawer();
+  if (lastState) renderGuests(lastState.guests);
   try {
     const r = await api(`/api/guests/${guest}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: text }),
     });
-    clearTimeout(timer);
-    wakeNote.remove();
-    addMsg("agent", r.reply);
+    delete pending[guest];
     const prev = lastBootIds[guest];
     lastBootIds[guest] = r.boot_id;
-    let meta = `boot_id ${r.boot_id} · ${r.history_len / 2} exchanges`;
+    record(guest, "agent", r.reply);
     if (r.was_suspended) {
-      meta += " · woke from a snapshot";
-      addMsg("system", prev === r.boot_id
-        ? `✅ same boot_id (${r.boot_id}) after resume — RAM really survived`
-        : "✅ resumed from checkpoint with the conversation intact");
+      const how = r.slept_as === "crashed" ? "a crash (rewound to the last snapshot)"
+        : r.slept_as === "napping" ? "a node-local snapshot" : "a snapshot in GCS";
+      record(guest, "system", prev === r.boot_id
+        ? `✅ woke from ${how} with the same boot_id (${r.boot_id}) — RAM really survived`
+        : `✅ woke from ${how} with the conversation intact`);
     }
-    $("drawer-meta").textContent = meta;
   } catch (e) {
-    clearTimeout(timer);
-    wakeNote.textContent = `⚠ ${e.message}`;
+    delete pending[guest];
+    record(guest, "system", `⚠ ${e.message}`);
   } finally {
-    chatBusy = false;
-    $("chat-send").disabled = false;
+    if (currentGuest === guest) renderDrawerMeta();
     refresh();
   }
 }
@@ -194,6 +277,7 @@ $("chat-form").addEventListener("submit", sendChat);
 $("drawer-close").addEventListener("click", () => {
   $("drawer").classList.add("hidden");
   currentGuest = null;
+  if (lastState) renderGuests(lastState.guests);
 });
 $("btn-open").addEventListener("click", async () => {
   $("btn-open").disabled = true;
@@ -225,20 +309,18 @@ $("btn-rm-room").addEventListener("click", async () => {
 });
 
 function addBanner(text) {
-  const banner = $("banner");
-  banner.textContent = text;
-  banner.classList.remove("hidden");
+  showBanner(text, "info");
   clearTimeout(bannerTimer);
-  bannerTimer = setTimeout(() => {
-    banner.classList.add("hidden");
-    bannerTimer = null;
-  }, 5000);
+  bannerTimer = setTimeout(() => { hideBanner(); bannerTimer = null; }, 5000);
 }
 
 $("btn-reset").addEventListener("click", async () => {
   if (!confirm("Reset the hotel? All conversations will be lost.")) return;
   try { await api("/api/reset", { method: "POST" }); } catch (e) { alert(e.message); }
   lastBootIds = {};
+  transcripts = {};
+  saveTranscripts();
+  if (currentGuest) renderDrawer();
   refresh();
 });
 

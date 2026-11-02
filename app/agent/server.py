@@ -13,10 +13,10 @@ Identity notes:
     the first real request — after the actor has been created and diverged
     from the golden snapshot — making it unique per actor AND stable across
     every later suspend/resume. Its stability is the proof RAM survived.
-  - The guest learns its own name from the X-Actor-Name header the concierge
-    sends (with the Host header `<name>.hotel.actors...` as fallback — the
-    router's Envoy rewrites Host to the upstream pod IP, so Host alone is
-    unreliable).
+  - The guest learns its own name from Substrate itself: the ActorTemplate
+    projects the actor's metadata into the sandbox (a systemInfo volume,
+    ACTOR_NAME_FILE). The concierge also sends X-Actor-Name on every
+    request; the two are compared, and a mismatch is a misdirect (421).
 
 Zero-idle: LINGER_SECONDS after the last reply, the agent asks the concierge
 to tuck it in (POST /internal/yield). The agent cannot call SuspendActor
@@ -44,6 +44,20 @@ logger = logging.getLogger(__name__)
 
 LINGER_SECONDS = float(os.environ.get("LINGER_SECONDS", "10"))
 CONCIERGE_URL = os.environ.get("CONCIERGE_URL", "").rstrip("/")
+# Substrate writes the actor's own name here (systemInfo actorMetadata
+# volume, see template_manager.py). Read lazily: the golden pod's file names
+# the golden actor, and every guest restored from that snapshot must re-read.
+ACTOR_NAME_FILE = os.environ.get("ACTOR_NAME_FILE", "")
+
+
+def _projected_name() -> str:
+    if not ACTOR_NAME_FILE:
+        return ""
+    try:
+        with open(ACTOR_NAME_FILE) as f:
+            return f.read().strip().lower()
+    except OSError:
+        return ""
 
 # Hard reference so the linger task can't be garbage-collected mid-run
 # (asyncio keeps only weak refs to tasks).
@@ -93,10 +107,12 @@ state: dict = {
 def _ensure_identity(request: Request) -> None:
     if state["boot_id"] is None:
         state["boot_id"] = uuid.uuid4().hex[:12]
-    # Prefer the explicit header: the router's Envoy rewrites Host to the
-    # upstream pod IP, so the Host trick alone would name every guest after
-    # the first octet of its pod's IP.
-    name = request.headers.get("x-actor-name", "").strip().lower()
+    # Who am I: Substrate's projected actor metadata is authoritative. The
+    # header is the concierge's claim about who it meant to reach; the Host
+    # label is a last resort for local runs without either.
+    projected = _projected_name()
+    claimed = request.headers.get("x-actor-name", "").strip().lower()
+    name = projected or claimed
     if not name:
         host = request.headers.get("host", "")
         name = host.split(".", 1)[0].strip().lower()
@@ -109,10 +125,10 @@ def _ensure_identity(request: Request) -> None:
     # tells the concierge to retry rather than let guests answer for each
     # other (cross-talk shows the wrong persona AND pollutes checkpointed
     # history).
-    if name and state["guest"] and name != state["guest"]:
+    if claimed and state["guest"] and claimed != state["guest"]:
         raise HTTPException(
             status_code=421,
-            detail=f"this is {state['guest']}, not {name}",
+            detail=f"this is {state['guest']}, not {claimed}",
         )
 
 
@@ -127,8 +143,9 @@ async def healthz():
 
 @app.get("/readyz")
 async def readyz():
-    # Must return 200 immediately with no external calls: the golden pod has
-    # to go Ready for the golden snapshot to be taken at all.
+    # Substrate's wakeupProbe: ResumeActor blocks until this answers 200.
+    # Must return immediately with no external calls — a slow or failing
+    # probe CRASHES the actor instead of waking it.
     return {"status": "ok"}
 
 

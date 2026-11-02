@@ -1,14 +1,16 @@
 # RBAC for the concierge. Named 00- so it sorts (and applies) before the
 # workload manifests.
 #
-# The concierge needs exactly three permissions:
+# Everything Substrate-side (actors, templates, egress policies) goes through
+# the ate API, authenticated with this ServiceAccount's projected token and
+# authorized by Substrate's own access policies (deploy_app.sh grants it
+# `editor` on the hotel atespace and `viewer` globally). Kubernetes RBAC is
+# needed for just two things:
 #   1. read its OWN pod — to learn its image digest (containerStatuses[].imageID)
-#      so it can register a digest-pinned ActorTemplate (the ate.dev CRD
-#      rejects tag-only images);
-#   2. manage ActorTemplates in its namespace (create at startup, prune on reset);
-#   3. read ONE secret in ate-system: servicedns-ca, the trust anchor for the
-#      TLS connection to ate-api-server. That is cross-namespace, hence the
-#      name-scoped ClusterRole (resourceNames narrows it to just that secret).
+#      so it can register a digest-pinned ActorTemplate;
+#   2. patch the WorkerPool — "add room" / "remove room" scales it at runtime.
+# The TLS trust anchors and the router client certificate are projected by
+# kubelet (clusterTrustBundle / podCertificate volumes) — no Secret reads.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -25,10 +27,6 @@ rules:
     resources: ["pods"]
     verbs: ["get", "list"]
   - apiGroups: ["ate.dev"]
-    resources: ["actortemplates"]
-    verbs: ["get", "list", "create", "delete"]
-  # "Add room" / "remove room" scales the WorkerPool at runtime.
-  - apiGroups: ["ate.dev"]
     resources: ["workerpools"]
     verbs: ["get", "list", "patch"]
 ---
@@ -44,30 +42,4 @@ subjects:
 roleRef:
   kind: Role
   name: substrate-hotel-concierge
-  apiGroup: rbac.authorization.k8s.io
----
-# Cluster-scoped by necessity (cross-namespace secret read), but name-scoped
-# to the single CA secret. NOTE: cluster-scoped objects survive a namespace
-# teardown; names are deterministic and re-applies are safe.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: substrate-hotel-servicedns-ca-reader
-rules:
-  - apiGroups: [""]
-    resources: ["secrets"]
-    resourceNames: ["servicedns-ca"]
-    verbs: ["get"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: substrate-hotel-servicedns-ca-reader
-subjects:
-  - kind: ServiceAccount
-    name: substrate-hotel-concierge
-    namespace: ${NAMESPACE}
-roleRef:
-  kind: ClusterRole
-  name: substrate-hotel-servicedns-ca-reader
   apiGroup: rbac.authorization.k8s.io

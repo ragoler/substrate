@@ -79,6 +79,13 @@ button:disabled { opacity: 0.5; cursor: wait; }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
 .dot.awake { background: var(--awake); }
 .dot.suspended, .dot.suspending { background: var(--sleep); }
+.dot.napping { background: #7ee787; }
+.dot.crashed { background: var(--danger); }
+.guest.crashed { border-color: var(--danger); }
+.guest.napping .status { color: #7ee787; }
+.guest.pending { border-color: var(--warn); }
+.guest.selected { outline: 2px solid var(--accent); }
+.banner.info { color: var(--accent); }
 .dot.waking { background: var(--warn); }
 .dot.vacant { background: var(--muted); }
 

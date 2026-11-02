@@ -1,6 +1,6 @@
-"""The guest agent in isolation: identity from X-Actor-Name (with the Host
-header as fallback), the 421 misdirect guard, RAM history, lazy boot_id,
-immediate readyz."""
+"""The guest agent in isolation: identity from Substrate's projected actor
+metadata (X-Actor-Name, then the Host header, as fallbacks), the 421
+misdirect guard, RAM history, lazy boot_id, immediate readyz."""
 
 HOST = {"Host": "amara.hotel.actors.resources.substrate.ate.dev"}
 
@@ -96,3 +96,26 @@ def test_misdirected_request_is_421(agent_client):
     assert agent_client.get(
         "/history", headers={"X-Actor-Name": "viktor"}
     ).status_code == 421
+
+
+def test_projected_actor_name_is_authoritative(agent_client, tmp_path):
+    """Substrate writes the actor's name into its sandbox (systemInfo
+    actorMetadata volume); that beats any header, and a header naming a
+    DIFFERENT guest is a misdirect even on the very first request."""
+    from app.agent import server
+
+    name_file = tmp_path / "name"
+    name_file.write_text("nadia\n")
+    server.ACTOR_NAME_FILE = str(name_file)
+
+    r = agent_client.post(
+        "/chat", json={"message": "hi"},
+        headers={"Host": "10.80.3.4:80", "X-Actor-Name": "nadia"},
+    )
+    assert r.status_code == 200 and r.json()["guest"] == "nadia"
+
+    r = agent_client.post(
+        "/chat", json={"message": "hi"}, headers={"X-Actor-Name": "kai"}
+    )
+    assert r.status_code == 421
+    assert "nadia" in r.json()["detail"]

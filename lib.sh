@@ -1,5 +1,5 @@
-# Shared helpers for setup_infra.sh / deploy_app.sh / verify_setup.sh.
-# Sourced, not executed — callers set ROOT first:
+# Shared helpers for setup_infra.sh / deploy_app.sh / verify_setup.sh and the
+# cluster installer. Sourced, not executed — callers set ROOT first:
 #   ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 #   source "${ROOT}/lib.sh"
 # shellcheck shell=bash
@@ -15,6 +15,62 @@ load_env() {
   fi
   REGION="${REGION:-${ZONE%-*}}"
   NAMESPACE="${NAMESPACE:-default}"
+}
+
+# --- The pinned upstream release ------------------------------------------------
+# Agent Substrate publishes release images to ghcr.io; the plane is installed
+# from them (no source build), and the WorkerPool's worker image is the same
+# release's ateworker-gvisor, pinned by digest. UPSTREAM_REF is the git tag the
+# manifests and the installer (`go run ./cmd/ate-setup`) are taken from, and
+# the tag the images carry. Single source of truth for every script.
+UPSTREAM_REPO_URL="${UPSTREAM_REPO_URL:-https://github.com/agent-substrate/substrate.git}"
+UPSTREAM_REF="${UPSTREAM_REF:-v1.0.0-rc.1}"
+UPSTREAM_IMAGE_REPO="${UPSTREAM_IMAGE_REPO:-ghcr.io/agent-substrate/substrate}"
+# Substrate's own names the hotel binds to.
+ATE_SYSTEM_NS="ate-system"
+ATESPACE="${ATESPACE:-hotel}"
+# The snapshot transfer Google service account upstream's IAM model uses:
+# ate-api-server impersonates it (token creator binding on the SA) and hands
+# per-actor downscoped tokens to the data plane for snapshot uploads/downloads.
+SNAPSHOT_TRANSFER_GSA_NAME="${SNAPSHOT_TRANSFER_GSA_NAME:-ate-snapshot-transfer}"
+# Repo-local tool install dir (kubectl-ate from the pinned checkout).
+TOOLS_DIR="${ROOT}/.tools"
+KUBECTL_ATE="${TOOLS_DIR}/kubectl-ate"
+
+# The installed release, read off the api-server image on the current cluster.
+installed_substrate_release() {
+  kubectl -n "${ATE_SYSTEM_NS}" get deployment ate-api-server \
+    -o jsonpath='{.spec.template.spec.containers[?(@.name=="ate-api-server")].image}' 2>/dev/null \
+    | sed -E 's/^[^:]+:([^@]+).*/\1/'
+}
+
+# ghcr_digest <image-name> — the manifest digest ghcr.io serves for
+# ${UPSTREAM_IMAGE_REPO}/<image-name>:${UPSTREAM_REF} (anonymous pull token).
+ghcr_digest() {
+  python3 - "$1" "${UPSTREAM_IMAGE_REPO}" "${UPSTREAM_REF}" <<'PY'
+import json, sys, urllib.request
+image, repo, tag = sys.argv[1], sys.argv[2], sys.argv[3]
+host, path = repo.split("/", 1)
+scope = f"repository:{path}/{image}:pull"
+tok = json.load(urllib.request.urlopen(f"https://{host}/token?scope={scope}"))["token"]
+req = urllib.request.Request(
+    f"https://{host}/v2/{path}/{image}/manifests/{tag}", method="HEAD",
+    headers={"Authorization": f"Bearer {tok}",
+             "Accept": ", ".join([
+                 "application/vnd.oci.image.index.v1+json",
+                 "application/vnd.docker.distribution.manifest.list.v2+json",
+                 "application/vnd.oci.image.manifest.v1+json"])})
+with urllib.request.urlopen(req) as r:
+    print(r.headers["Docker-Content-Digest"])
+PY
+}
+
+# kate — kubectl-ate from the pinned checkout (installed by the cluster
+# installer into .tools/). Talks to ate-api-server through its own
+# port-forward, as the ate-client ServiceAccount (the install's bootstrap owner).
+kate() {
+  [ -x "${KUBECTL_ATE}" ] || { echo "Error: ${KUBECTL_ATE} missing — run ./setup_infra.sh first" >&2; return 1; }
+  "${KUBECTL_ATE}" "$@"
 }
 
 # manifest_name <Kind> <file> — metadata.name of the first <Kind> in the file.

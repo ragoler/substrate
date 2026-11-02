@@ -1,0 +1,27 @@
+# Agent Substrate install document for the Agent Hotel (rendered by
+# cluster/install-substrate-hotel-prereq.sh; ${VARS} come from .env). The two
+# settings that name identities are passed as flags beside it so they appear
+# in the installer's run report verbatim: --credential-provider and
+# --ingress-allowed-spiffe-ids. See upstream docs/guides/operator-install.md.
+apiVersion: install.ate.dev/v1alpha1
+kind: SubstrateInstall
+namespace: ate-system
+context: ${KUBE_CONTEXT}
+clusterSize: size0
+# Release images, pinned by digest at install time.
+images:
+  repo: ${UPSTREAM_IMAGE_REPO}
+  tag: ${UPSTREAM_REF}
+# Where every guest's snapshots live (one prefix per install).
+storage:
+  bucketName: ${SNAPSHOT_BUCKET}
+  snapshotLocation: gs://${SNAPSHOT_BUCKET}/agent-hotel/
+  transferGSAName: ${SNAPSHOT_TRANSFER_GSA_NAME}
+# GKE: derives the ServiceAccount token issuer ate-api-server trusts
+# (zone for zonal clusters), and the Workload Identity pool.
+gcp:
+  projectID: ${PROJECT_NAME}
+  clusterName: ${CLUSTER}
+  clusterLocation: ${CLUSTER_LOCATION}
+atenet:
+  dataplane: envoy
